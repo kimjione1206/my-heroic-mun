@@ -17,8 +17,11 @@ module.exports = defineConfig({
   use: {
     actionTimeout: 10_000,
     navigationTimeout: 30_000,
-    trace: 'on-first-retry',
+    // trace: 모든 테스트마다 저장 — 내부에 액션별 스크린샷 시퀀스 포함 (Claude가 unzip 후 PNG 순차 Read)
+    trace: 'on',
+    // 실패 순간 최종 상태 PNG (빠른 진단용)
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    // 비디오는 Claude가 읽을 수 없어 제거 (trace 내 스크린샷 시퀀스로 대체)
+    video: 'off',
   },
 });
