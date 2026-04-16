@@ -1,0 +1,74 @@
+{
+  "name": "my-heroic-mun",
+  "version": "0.1.0",
+  "private": true,
+  "description": "나만의 영웅문 - 커스텀 코스피 차트 데스크톱 앱",
+  "author": "허정민",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev:next": "next dev renderer -p 3000",
+    "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .",
+    "dev": "concurrently -k \"npm:dev:next\" \"npm:dev:electron\"",
+    "build:next": "next build renderer",
+    "build": "npm run build:next && electron-builder --win nsis",
+    "start": "electron .",
+    "sync:master": "node scripts/rebuild-toggle.js node && node scripts/fetch-krx-master.js && node scripts/rebuild-toggle.js electron",
+    "sync:all": "node scripts/rebuild-toggle.js node && node scripts/sync-all.js && node scripts/rebuild-toggle.js electron",
+    "sync:daily": "node scripts/rebuild-toggle.js node && node scripts/sync-all.js --mode=incremental && node scripts/rebuild-toggle.js electron",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "cheerio": "^1.2.0",
+    "iconv-lite": "^0.7.2",
+    "klinecharts": "^10.0.0-alpha6",
+    "next": "14.2.15",
+    "p-limit": "^7.3.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "yahoo-finance2": "^3.14.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.heojeongmin.myheroicmun",
+    "productName": "나만의 영웅문",
+    "files": [
+      "electron/**/*",
+      "renderer/out/**/*",
+      "patterns/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "patterns/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "MyHeroicMun-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "나만의 영웅문"
+    }
+  }
+}
