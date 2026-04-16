@@ -69,13 +69,18 @@ app.whenReady().then(async () => {
 
   // smoke 모드: fixture sqlite를 userData로 복사 (네트워크 없이 고정 데이터)
   if (isSmoke) {
-    const fixtureSrc = app.isPackaged
-      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'smoke-warehouse.sqlite')
-      : path.join(__dirname, '..', 'test', 'fixtures', 'smoke-warehouse.sqlite');
-    const dest = path.join(userData, 'warehouse.sqlite');
-    if (fs.existsSync(fixtureSrc)) {
-      fs.copyFileSync(fixtureSrc, dest);
-      console.log('[smoke] fixture warehouse copied');
+    try {
+      const fixtureSrc = app.isPackaged
+        ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'smoke-warehouse.sqlite')
+        : path.join(__dirname, '..', 'test', 'fixtures', 'smoke-warehouse.sqlite');
+      const dest = path.join(userData, 'warehouse.sqlite');
+      console.log(`[smoke] fixtureSrc=${fixtureSrc} exists=${fs.existsSync(fixtureSrc)}`);
+      if (fs.existsSync(fixtureSrc)) {
+        fs.copyFileSync(fixtureSrc, dest);
+        console.log('[smoke] fixture warehouse copied');
+      }
+    } catch (e) {
+      console.error('[smoke] fixture copy failed:', e.message);
     }
   }
 
