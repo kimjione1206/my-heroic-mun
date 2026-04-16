@@ -20,5 +20,5 @@ const cmd = target === 'node'
   ? ['npm', ['rebuild', 'better-sqlite3', '--build-from-source']]
   : ['npx', ['electron-rebuild', '-f', '-w', 'better-sqlite3']];
 
-const r = spawnSync(cmd[0], cmd[1], { stdio: ['ignore', 'ignore', 'inherit'] });
+const r = spawnSync(cmd[0], cmd[1], { stdio: ['ignore', 'ignore', 'inherit'], shell: true });
 process.exit(r.status ?? 1);

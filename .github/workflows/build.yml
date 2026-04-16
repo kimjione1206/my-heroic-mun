@@ -19,14 +19,13 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
-
-      - name: Rebuild native modules for Electron
-        run: npx electron-rebuild -f -w better-sqlite3
+      # postinstall이 better-sqlite3를 Electron ABI로 빌드 (|| true 없음 → 실패 시 early fail)
 
       - name: Build Next.js static export
         run: npm run build:next
 
       - name: Seed smoke fixture
+        # seed:smoke 스크립트가 Node ABI로 리빌드 → seed → Electron ABI 복원
         run: npm run seed:smoke
 
       - name: Package Windows NSIS installer
