@@ -31,6 +31,21 @@ export default function Home() {
   const [syncStatus, setSyncStatus] = useState({ running: false, lastSyncAt: null, total: 0 });
   const [syncProg, setSyncProg] = useState(null);
 
+  // test hooks: Playwright 에서 chart 인스턴스/상태 직접 접근
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window._testHooks = {
+      getChart: () => chartInstance.current,
+      getSelected: () => selected,
+      getPeriod: () => period,
+      getWatchlist: () => watchlist,
+      getPatterns: () => patterns,
+      getEnabledPatterns: () => [...enabledPatterns],
+      getHits: () => hits,
+      getSyncStatus: () => syncStatus,
+    };
+  });
+
   useEffect(() => {
     if (!window.api) return;
     window.api.getVersion().then(setVersion);
@@ -305,7 +320,7 @@ export default function Home() {
           period={period} onPeriod={setPeriod}
           indicators={indicators} onToggleIndicator={toggleIndicator}
         />
-        <div ref={chartRef} className="chart" />
+        <div ref={chartRef} className="chart" data-testid="kline-chart" />
         {loading && (
           <div style={{ position: 'absolute', top: 60, right: 16, fontSize: 11, color: '#9aa' }}>
             데이터 로딩 중...

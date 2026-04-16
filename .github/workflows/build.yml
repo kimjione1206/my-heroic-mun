@@ -1,23 +1,64 @@
-name: Build Windows Installer
+name: Build & E2E
 on:
   push:
+    branches: [main]
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build-win:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - run: npm ci
-      - run: npm run build
+
+      - name: Rebuild native modules for Electron
+        run: npx electron-rebuild -f -w better-sqlite3
+
+      - name: Build Next.js static export
+        run: npm run build:next
+
+      - name: Seed smoke fixture
+        run: npm run seed:smoke
+
+      - name: Package Windows NSIS installer
+        run: npx electron-builder --win nsis
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        env:
+          CI: 'true'
+          MYH_SMOKE: '1'
+        run: npx playwright test
+        timeout-minutes: 15
+
+      - name: Upload installer
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: MyHeroicMun-Setup
+          name: MyHeroicMun-Setup-${{ github.sha }}
           path: dist/*.exe
+          if-no-files-found: ignore
+
+      - name: Upload E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics-${{ github.sha }}
+          path: |
+            test-results/**
+            playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 30

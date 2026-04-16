@@ -16,7 +16,10 @@
     "sync:all": "node scripts/rebuild-toggle.js node && node scripts/sync-all.js && node scripts/rebuild-toggle.js electron",
     "sync:daily": "node scripts/rebuild-toggle.js node && node scripts/sync-all.js --mode=incremental && node scripts/rebuild-toggle.js electron",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "seed:smoke": "node scripts/rebuild-toggle.js node && node test/fixtures/seed-smoke.js && node scripts/rebuild-toggle.js electron",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
@@ -31,6 +34,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
+    "@playwright/test": "^1.59.1",
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
     "electron": "^33.0.0",
@@ -44,10 +48,12 @@
       "electron/**/*",
       "renderer/out/**/*",
       "patterns/**/*",
+      "test/fixtures/**/*",
       "package.json"
     ],
     "asarUnpack": [
-      "patterns/**/*"
+      "patterns/**/*",
+      "test/fixtures/**/*"
     ],
     "directories": {
       "output": "dist"

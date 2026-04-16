@@ -17,6 +17,10 @@ const { PatternRuntime } = require('./pattern-runtime');
 const { runBacktest } = require('./backtest');
 
 const isDev = process.env.NODE_ENV === 'development';
+const isSmoke = process.env.MYH_SMOKE === '1';
+
+// CI/smoke 모드: GPU 비활성화 (windows-latest 하드웨어 가속 불안정)
+if (isSmoke) app.disableHardwareAcceleration();
 let mainWindow;
 let scheduler;
 let patterns;
@@ -62,6 +66,19 @@ function createWindow() {
 app.whenReady().then(async () => {
   const userData = getUserDataPath();
   fs.mkdirSync(userData, { recursive: true });
+
+  // smoke 모드: fixture sqlite를 userData로 복사 (네트워크 없이 고정 데이터)
+  if (isSmoke) {
+    const fixtureSrc = app.isPackaged
+      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'smoke-warehouse.sqlite')
+      : path.join(__dirname, '..', 'test', 'fixtures', 'smoke-warehouse.sqlite');
+    const dest = path.join(userData, 'warehouse.sqlite');
+    if (fs.existsSync(fixtureSrc)) {
+      fs.copyFileSync(fixtureSrc, dest);
+      console.log('[smoke] fixture warehouse copied');
+    }
+  }
+
   openWarehouse(userData);
   seedStocksIfEmpty(SEED);
   seedWatchlistIfEmpty(SEED);
@@ -85,10 +102,12 @@ app.whenReady().then(async () => {
       onDone: (p) => mainWindow?.webContents.send('sync:done', p),
     });
     scheduler.start();
-    // 부팅 시 자동 증분 sync (창이 뜬 뒤 5초 후, 한 번만)
-    setTimeout(() => {
-      scheduler.runNow({ trigger: 'boot' }).catch((e) => console.error('[boot-sync]', e));
-    }, 5000);
+    if (!isSmoke) {
+      // 부팅 시 자동 증분 sync (smoke 모드에선 race 방지 위해 생략)
+      setTimeout(() => {
+        scheduler.runNow({ trigger: 'boot' }).catch((e) => console.error('[boot-sync]', e));
+      }, 5000);
+    }
   }
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
