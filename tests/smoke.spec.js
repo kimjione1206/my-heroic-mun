@@ -34,4 +34,8 @@ test('[smoke-3] 차트 초기 렌더 (캔들 데이터 존재)', async () => {
   // fixture의 60개 실 데이터 이상이면 통과 (padding 포함 300+ 가능).
   expect(len).toBeGreaterThanOrEqual(60);
   await expect(window.locator('[data-testid="kline-chart"] canvas').first()).toBeVisible();
+  // 시각 검증용: 전체 화면 + 차트 영역만 각각 저장
+  await window.screenshot({ path: 'test-results/visual-full.png', fullPage: false });
+  const chart = window.locator('[data-testid="kline-chart"]');
+  await chart.screenshot({ path: 'test-results/visual-chart.png' });
 });
