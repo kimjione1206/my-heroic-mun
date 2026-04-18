@@ -308,11 +308,11 @@ ipcMain.handle('candles:get', async (_e, arg) => {
     let daily = loadCandles(code, 'D');
     if (daily.length === 0) {
       const stock = listStocks().find((s) => s.code === code);
-      if (stock) {
+      if (stock && !isSmoke) {
         await syncOne(getDb(), stock, { mode: 'full', period: 'D', years: 10 });
         daily = loadCandles(code, 'D');
       }
-    } else {
+    } else if (!isSmoke) {
       const stock = listStocks().find((s) => s.code === code);
       if (stock) refreshOne(stock, 'D').catch(() => {});
     }
@@ -321,10 +321,13 @@ ipcMain.handle('candles:get', async (_e, arg) => {
 
   const cached = loadCandles(code, period);
   if (cached.length > 0) {
-    const stock = listStocks().find((s) => s.code === code);
-    if (stock) refreshOne(stock, period).catch(() => {});
+    if (!isSmoke) {
+      const stock = listStocks().find((s) => s.code === code);
+      if (stock) refreshOne(stock, period).catch(() => {});
+    }
     return cached;
   }
+  if (isSmoke) return [];
   const stock = listStocks().find((s) => s.code === code);
   if (!stock) return [];
   await syncOne(getDb(), stock, { mode: 'full', period, years: 5 });
