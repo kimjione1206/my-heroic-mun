@@ -103,7 +103,7 @@ function createSheetWindow() {
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
   if (isDev) sheetWindow.loadURL('http://localhost:3000/sheet');
-  else sheetWindow.loadFile(path.join(RENDERER_OUT, 'sheet', 'index.html'));
+  else sheetWindow.loadFile(path.join(RENDERER_OUT, 'sheet.html'));
 
   sheetWindow.on('close', () => {
     if (sheetWindow && !sheetWindow.isDestroyed()) saveState('sheet', sheetWindow.getBounds());
