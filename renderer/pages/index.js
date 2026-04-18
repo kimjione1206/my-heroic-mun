@@ -135,6 +135,14 @@ export default function Home() {
           callback(candles, false);
         },
       });
+      // 초기 진입 시 volumeRankCandle 인디케이터는 데이터 도착 전 draw 되어 색이 안 먹음.
+      // setDataLoader 이후 override로 강제 재계산 + 프레임 대기 후 한 번 더.
+      requestAnimationFrame(() => {
+        try { chart.overrideIndicator({ name: VOLUME_RANK_INDICATOR }); } catch {}
+        requestAnimationFrame(() => {
+          try { chart.overrideIndicator({ name: VOLUME_RANK_INDICATOR }); } catch {}
+        });
+      });
       updateSummary(candles);
       await renderPatternOverlays(chart, kline);
 
@@ -154,6 +162,22 @@ export default function Home() {
     return () => { disposed = true; cleanupCandles?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, period]);
+
+  // 차트 컨테이너 리사이즈 감지 → chart.resize() 호출 (창 크기 변경 시 즉시 반영)
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const ro = new ResizeObserver(() => {
+      const chart = chartInstance.current;
+      if (!chart) return;
+      try {
+        chart.resize?.();
+        // resize 후 거래량 순위 색상 재계산 (새 뷰포트의 max volume 기준)
+        chart.overrideIndicator?.({ name: VOLUME_RANK_INDICATOR });
+      } catch {}
+    });
+    ro.observe(chartRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   // 활성 패턴만 바뀌었을 때 오버레이 갱신.
   // selected/period 변경은 위쪽 effect에서 이미 재렌더 처리되므로 여기서 제외.

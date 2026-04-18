@@ -12,6 +12,7 @@ const {
   saveWorkspace, loadWorkspace, listWorkspaces, deleteWorkspace,
 } = require('./warehouse');
 const { syncOne } = require('./sync');
+const { toWeekly, toMonthly } = require('./aggregate');
 const { Scheduler } = require('./scheduler');
 const { PatternRuntime } = require('./pattern-runtime');
 const { runBacktest } = require('./backtest');
@@ -143,6 +144,23 @@ ipcMain.handle('sync:run-now', async () => {
 ipcMain.handle('candles:get', async (_e, arg) => {
   const { code, period } = normalizeCodePeriod(arg);
   if (!code) return [];
+
+  // 주봉·월봉은 일봉에서 로컬 집계 (Yahoo 5년 한계 우회, 10년치 즉시 반환)
+  if (period === 'W' || period === 'M') {
+    let daily = loadCandles(code, 'D');
+    if (daily.length === 0) {
+      const stock = listStocks().find((s) => s.code === code);
+      if (stock) {
+        await syncOne(getDb(), stock, { mode: 'full', period: 'D', years: 10 });
+        daily = loadCandles(code, 'D');
+      }
+    } else {
+      const stock = listStocks().find((s) => s.code === code);
+      if (stock) refreshOne(stock, 'D').catch(() => {});
+    }
+    return period === 'W' ? toWeekly(daily) : toMonthly(daily);
+  }
+
   const cached = loadCandles(code, period);
   if (cached.length > 0) {
     const stock = listStocks().find((s) => s.code === code);
