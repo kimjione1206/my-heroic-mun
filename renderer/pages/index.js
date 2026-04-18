@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import StockSearch from '../components/StockSearch';
 import ChartToolbar, { INDICATORS } from '../components/ChartToolbar';
 import PatternList from '../components/PatternList';
 import BottomPanel from '../components/BottomPanel';
 import { registerVolumeRankIndicator, VOLUME_RANK_INDICATOR } from '../lib/volume-rank-indicator';
 
-const DEFAULT_LIST = [
-  { code: '005930', name: '삼성전자' },
-  { code: '000660', name: 'SK하이닉스' },
-];
+// react-window는 DOM 측정에 의존 → SSR에서 실행 불가. 클라이언트 전용으로 로드.
+const MarketCapSheet = dynamic(() => import('../components/MarketCapSheet'), { ssr: false });
+
+const INITIAL_SELECTED = { code: '005930', name: '삼성전자' };
 const DEFAULT_INDICATORS = { MA: true, BOLL: false, EMA: false, RSI: false, MACD: false, KDJ: false };
 
 export default function Home() {
@@ -16,8 +17,7 @@ export default function Home() {
   const chartInstance = useRef(null);
   const indicatorIds = useRef({});
   const overlayIds = useRef([]);
-  const [watchlist, setWatchlist] = useState(DEFAULT_LIST);
-  const [selected, setSelected] = useState(DEFAULT_LIST[0]);
+  const [selected, setSelected] = useState(INITIAL_SELECTED);
   const [period, setPeriod] = useState('D');
   const [indicators, setIndicators] = useState(DEFAULT_INDICATORS);
   const [patterns, setPatterns] = useState([]);
@@ -38,7 +38,6 @@ export default function Home() {
       getChart: () => chartInstance.current,
       getSelected: () => selected,
       getPeriod: () => period,
-      getWatchlist: () => watchlist,
       getPatterns: () => patterns,
       getEnabledPatterns: () => [...enabledPatterns],
       getHits: () => hits,
@@ -50,9 +49,6 @@ export default function Home() {
     if (!window.api) return;
     window.api.getVersion().then(setVersion);
     window.api.getDataSource().then(setDataSource);
-    window.api.listWatchlist().then((list) => {
-      if (list.length > 0) { setWatchlist(list); setSelected(list[0]); }
-    });
     window.api.listPatterns().then((list) => {
       setPatterns(list);
       setEnabledPatterns(new Set(list.filter((p) => p.defaultEnabled).map((p) => p.id)));
@@ -136,17 +132,14 @@ export default function Home() {
       });
 
       // volumeRankCandle 인디케이터는 반드시 데이터 로드 이후 생성해야 첫 draw에서 색이 들어감.
-      // setDataLoader에서 데이터 반영 후 다음 프레임에 indicator 생성.
       await new Promise((r) => requestAnimationFrame(() => r()));
       try { chart.createIndicator(VOLUME_RANK_INDICATOR, false, { id: 'candle_pane' }); } catch {}
       updateSummary(candles);
       await renderPatternOverlays(chart, kline);
 
       if (window.api) {
-        let latestCandles = candles;
         cleanupCandles = window.api.onCandlesUpdated(({ code, period: p, candles: fresh }) => {
           if (code === selected.code && p === period) {
-            latestCandles = fresh;
             chart.setDataLoader({ getBars: ({ callback }) => callback(fresh, false) });
             updateSummary(fresh);
             renderPatternOverlays(chart, kline);
@@ -159,7 +152,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, period]);
 
-  // 차트 컨테이너 리사이즈 감지 → chart.resize() 호출 (창 크기 변경 시 즉시 반영)
+  // 차트 컨테이너 리사이즈 감지
   useEffect(() => {
     if (!chartRef.current) return;
     const ro = new ResizeObserver(() => {
@@ -167,7 +160,6 @@ export default function Home() {
       if (!chart) return;
       try {
         chart.resize?.();
-        // resize 후 거래량 순위 색상 재계산 (새 뷰포트의 max volume 기준)
         chart.overrideIndicator?.({ name: VOLUME_RANK_INDICATOR });
       } catch {}
     });
@@ -175,8 +167,6 @@ export default function Home() {
     return () => ro.disconnect();
   }, []);
 
-  // 활성 패턴만 바뀌었을 때 오버레이 갱신.
-  // selected/period 변경은 위쪽 effect에서 이미 재렌더 처리되므로 여기서 제외.
   useEffect(() => {
     const chart = chartInstance.current;
     if (!chart) return;
@@ -252,18 +242,8 @@ export default function Home() {
     });
   };
 
-  const handleAdd = async (stock) => {
-    if (!window.api) return;
-    const list = await window.api.addWatch(stock.code, stock.name);
-    setWatchlist(list);
-    setSelected(stock);
-  };
-  const handleRemove = async (code, e) => {
-    e.stopPropagation();
-    if (!window.api) return;
-    const list = await window.api.removeWatch(code);
-    setWatchlist(list);
-    if (selected.code === code && list.length > 0) setSelected(list[0]);
+  const handlePickFromSearch = (stock) => {
+    if (stock?.code && stock?.name) setSelected({ code: stock.code, name: stock.name });
   };
 
   return (
@@ -304,35 +284,11 @@ export default function Home() {
         </span>
       </header>
 
-      <aside className="left">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span className="title">관심종목 ({watchlist.length})</span>
-          <button onClick={() => setSearchOpen(true)} style={{
-            background: 'transparent', border: '1px solid #333', color: '#9aa',
-            padding: '2px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer',
-          }}>+ 추가</button>
-        </div>
-        {watchlist.map((t) => (
-          <div key={t.code} className="ticker-row" onClick={() => setSelected(t)}
-               style={{ background: selected.code === t.code ? '#1a1d24' : 'transparent' }}>
-            <span>{t.name}</span>
-            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span style={{ color: '#9aa', fontSize: 11 }}>{t.code}</span>
-              <button onClick={(e) => handleRemove(t.code, e)} style={{
-                background: 'transparent', border: 'none', color: '#555', cursor: 'pointer',
-                fontSize: 14, padding: '0 4px',
-              }} title="삭제">×</button>
-            </span>
-          </div>
-        ))}
-
-        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #222' }}>
-          <div className="title" style={{ marginBottom: 8 }}>활성 패턴 ({enabledPatterns.size})</div>
-          <PatternList patterns={patterns} enabled={enabledPatterns} onToggle={togglePattern} />
-          <div style={{ marginTop: 8, fontSize: 10, color: '#555', lineHeight: 1.5 }}>
-            patterns/ 폴더 편집 시 자동 리로드
-          </div>
-        </div>
+      <aside className="left" style={{ padding: 0, overflow: 'hidden' }}>
+        <MarketCapSheet
+          selectedCode={selected.code}
+          onSelect={(s) => setSelected(s)}
+        />
       </aside>
 
       <main className="main">
@@ -370,8 +326,16 @@ export default function Home() {
         )}
 
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #222' }}>
+          <div className="title" style={{ marginBottom: 8 }}>활성 패턴 ({enabledPatterns.size})</div>
+          <PatternList patterns={patterns} enabled={enabledPatterns} onToggle={togglePattern} />
+          <div style={{ marginTop: 8, fontSize: 10, color: '#555', lineHeight: 1.5 }}>
+            patterns/ 폴더 편집 시 자동 리로드
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #222' }}>
           <div className="title" style={{ marginBottom: 8 }}>감지된 패턴 ({hits.length})</div>
-          <div style={{ maxHeight: 280, overflow: 'auto' }}>
+          <div style={{ maxHeight: 240, overflow: 'auto' }}>
             {hits.length === 0 ? (
               <div style={{ fontSize: 11, color: '#555' }}>아직 감지된 패턴 없음</div>
             ) : (
@@ -398,7 +362,6 @@ export default function Home() {
           patterns={patterns}
           getSnapshot={() => ({
             selected, period, indicators,
-            watchlistCodes: watchlist.map((w) => w.code),
             enabledPatternIds: [...enabledPatterns],
           })}
           applySnapshot={(s) => {
@@ -410,7 +373,7 @@ export default function Home() {
         />
       </footer>
 
-      <StockSearch open={searchOpen} onClose={() => setSearchOpen(false)} onPick={handleAdd} />
+      <StockSearch open={searchOpen} onClose={() => setSearchOpen(false)} onPick={handlePickFromSearch} />
     </div>
   );
 }

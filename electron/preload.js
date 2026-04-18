@@ -13,12 +13,19 @@ contextBridge.exposeInMainWorld('api', {
   getCandles: (code, period = 'D') => ipcRenderer.invoke('candles:get', { code, period }),
   getIndicators: (code, period = 'D') => ipcRenderer.invoke('indicators:get', { code, period }),
 
-  listWatchlist: () => ipcRenderer.invoke('watchlist:list'),
-  addWatch: (code, name) => ipcRenderer.invoke('watchlist:add', { code, name }),
-  removeWatch: (code) => ipcRenderer.invoke('watchlist:remove', code),
-  reorderWatch: (codes) => ipcRenderer.invoke('watchlist:reorder', codes),
-
   searchStocks: (q) => ipcRenderer.invoke('stocks:search', q),
+
+  // Market cap sheet
+  getMarketCapStatus: () => ipcRenderer.invoke('marketcap:status'),
+  getMarketCapDates: (limit) => ipcRenderer.invoke('marketcap:dates', { limit }),
+  getMarketCapRanking: (params) => ipcRenderer.invoke('marketcap:ranking', params),
+  ensureShares: () => ipcRenderer.invoke('shares:ensure'),
+
+  listSheetColumns: () => ipcRenderer.invoke('sheet:columns:list'),
+  addSheetColumn: (args) => ipcRenderer.invoke('sheet:columns:add', args),
+  removeSheetColumn: (key) => ipcRenderer.invoke('sheet:columns:remove', key),
+  reorderSheetColumns: (keys) => ipcRenderer.invoke('sheet:columns:reorder', keys),
+  setSheetCell: (args) => ipcRenderer.invoke('sheet:cell:set', args),
 
   listPatterns: () => ipcRenderer.invoke('patterns:list'),
   runPattern: (id, code, period = 'D') => ipcRenderer.invoke('patterns:run', { id, code, period }),
@@ -44,4 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   onSyncProgress: (cb) => on('sync:progress', cb),
   onSyncStart: (cb) => on('sync:start', cb),
   onSyncDone: (cb) => on('sync:done', cb),
+  onSharesStart: (cb) => on('shares:start', cb),
+  onSharesProgress: (cb) => on('shares:progress', cb),
+  onSharesDone: (cb) => on('shares:done', cb),
 });

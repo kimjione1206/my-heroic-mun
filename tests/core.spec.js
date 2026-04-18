@@ -9,8 +9,8 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await app?.close(); });
 
-test('[core-1] 종목 선택 → 선택 상태 변경', async () => {
-  await window.locator('.ticker-row:has-text("SK하이닉스")').click();
+test('[core-1] 시총 리스트 row 선택 → 차트 전환', async () => {
+  await window.locator('[data-testid="rank-row"][data-code="000660"]').click();
   await expect.poll(
     async () => (await window.evaluate(() => window._testHooks.getSelected())).code
   ).toBe('000660');

@@ -15,6 +15,7 @@
     "sync:master": "node scripts/rebuild-toggle.js node && node scripts/fetch-krx-master.js && node scripts/rebuild-toggle.js electron",
     "sync:all": "node scripts/rebuild-toggle.js node && node scripts/sync-all.js && node scripts/rebuild-toggle.js electron",
     "sync:daily": "node scripts/rebuild-toggle.js node && node scripts/sync-all.js --mode=incremental && node scripts/rebuild-toggle.js electron",
+    "sync:shares": "node scripts/rebuild-toggle.js node && node scripts/fetch-shares.js && node scripts/rebuild-toggle.js electron",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "seed:smoke": "node scripts/rebuild-toggle.js node && node test/fixtures/seed-smoke.js && node scripts/rebuild-toggle.js electron",
@@ -30,6 +31,7 @@
     "p-limit": "^7.3.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "react-window": "^1.8.10",
     "yahoo-finance2": "^3.14.0"
   },
   "devDependencies": {

@@ -13,6 +13,11 @@ function openWarehouse(userDataPath, filename = 'warehouse.sqlite') {
   return db;
 }
 
+function hasColumn(table, column) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  return rows.some((r) => r.name === column);
+}
+
 function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS stocks (
@@ -82,12 +87,6 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_notes_code ON notes(code, ts);
 
-    CREATE TABLE IF NOT EXISTS watchlist (
-      code       TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      sort_order INTEGER DEFAULT 0
-    );
-
     CREATE TABLE IF NOT EXISTS workspaces (
       name       TEXT PRIMARY KEY,
       config     TEXT NOT NULL,
@@ -101,7 +100,34 @@ function migrate() {
       result     TEXT,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS sheet_columns (
+      key         TEXT PRIMARY KEY,
+      label       TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sheet_cells (
+      code        TEXT NOT NULL,
+      column_key  TEXT NOT NULL,
+      value       TEXT,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (code, column_key)
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS idx_cells_col ON sheet_cells(column_key);
+
+    DROP TABLE IF EXISTS watchlist;
   `);
+
+  // stocks 테이블에 발행주식수 컬럼 조건부 추가 (SQLite는 IF NOT EXISTS 미지원)
+  if (!hasColumn('stocks', 'shares_outstanding')) {
+    db.exec('ALTER TABLE stocks ADD COLUMN shares_outstanding INTEGER');
+  }
+  if (!hasColumn('stocks', 'shares_updated_at')) {
+    db.exec('ALTER TABLE stocks ADD COLUMN shares_updated_at INTEGER');
+  }
 }
 
 function upsertStocks(rows) {
@@ -145,24 +171,6 @@ function searchStocks(query, limit = 30) {
   ).all(like, like, q, q, limit);
 }
 
-function listWatchlist() {
-  return db.prepare('SELECT code, name, sort_order FROM watchlist ORDER BY sort_order ASC, code ASC').all();
-}
-function addWatch(code, name) {
-  const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM watchlist').get().m;
-  db.prepare('INSERT OR IGNORE INTO watchlist (code, name, sort_order) VALUES (?, ?, ?)').run(code, name, max + 1);
-  return listWatchlist();
-}
-function removeWatch(code) {
-  db.prepare('DELETE FROM watchlist WHERE code = ?').run(code);
-  return listWatchlist();
-}
-function reorderWatch(codes) {
-  const stmt = db.prepare('UPDATE watchlist SET sort_order = ? WHERE code = ?');
-  const tx = db.transaction((arr) => { arr.forEach((c, i) => stmt.run(i, c)); });
-  tx(codes);
-  return listWatchlist();
-}
 function seedStocksIfEmpty(defaults) {
   const c = db.prepare('SELECT COUNT(*) AS c FROM stocks').get().c;
   if (c > 0) return;
@@ -177,14 +185,6 @@ function seedStocksIfEmpty(defaults) {
     updated_at: now,
   }));
   upsertStocks(rows);
-}
-
-function seedWatchlistIfEmpty(defaults) {
-  const c = db.prepare('SELECT COUNT(*) AS c FROM watchlist').get().c;
-  if (c > 0) return;
-  const stmt = db.prepare('INSERT INTO watchlist (code, name, sort_order) VALUES (?, ?, ?)');
-  const tx = db.transaction((arr) => arr.forEach((x, i) => stmt.run(x.code, x.name, i)));
-  tx(defaults);
 }
 
 function getDb() { return db; }
@@ -207,7 +207,7 @@ function removeNote(id) {
   return true;
 }
 
-// ── Workspaces (JSON blob) ─────────────────
+// ── Workspaces ─────────────────
 function saveWorkspace(name, config) {
   db.prepare('INSERT OR REPLACE INTO workspaces (name, config, updated_at) VALUES (?, ?, ?)')
     .run(name, JSON.stringify(config), Date.now());
@@ -225,11 +225,119 @@ function deleteWorkspace(name) {
   return listWorkspaces();
 }
 
+// ── Shares outstanding ─────────────────
+function upsertShares(rows) {
+  const stmt = db.prepare('UPDATE stocks SET shares_outstanding = ?, shares_updated_at = ? WHERE code = ?');
+  const now = Date.now();
+  const tx = db.transaction((arr) => arr.forEach((r) => stmt.run(r.shares, now, r.code)));
+  tx(rows);
+}
+function countStocksWithShares() {
+  return db.prepare('SELECT COUNT(*) AS c FROM stocks WHERE shares_outstanding IS NOT NULL').get().c;
+}
+function getSharesBaselineDate() {
+  return db.prepare('SELECT MAX(shares_updated_at) AS t FROM stocks').get()?.t || null;
+}
+
+// ── Market cap ranking ─────────────────
+function listAvailableDates(limit = 500) {
+  return db.prepare(
+    'SELECT DISTINCT ts FROM candles WHERE period = ? ORDER BY ts DESC LIMIT ?'
+  ).all('D', limit).map((r) => r.ts);
+}
+
+function listRanking(ts, { market, search, limit = 3000, offset = 0 } = {}) {
+  const where = ['c.period = \'D\'', 'c.ts = ?', 's.shares_outstanding IS NOT NULL'];
+  const params = [ts];
+  if (market === 'KOSPI' || market === 'KOSDAQ') {
+    where.push('s.market = ?');
+    params.push(market);
+  }
+  if (search && search.trim()) {
+    const like = `%${search.trim()}%`;
+    where.push('(s.code LIKE ? OR s.name LIKE ?)');
+    params.push(like, like);
+  }
+  const rows = db.prepare(`
+    SELECT s.code, s.name, s.market, s.shares_outstanding, c.close,
+           CAST(c.close * s.shares_outstanding AS INTEGER) AS market_cap
+    FROM stocks s
+    JOIN candles c ON c.code = s.code
+    WHERE ${where.join(' AND ')}
+    ORDER BY market_cap DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset);
+  return rows.map((r, i) => ({ ...r, rank: offset + i + 1 }));
+}
+
+// ── Sheet columns & cells ─────────────────
+function listSheetColumns() {
+  return db.prepare('SELECT key, label, type, sort_order FROM sheet_columns ORDER BY sort_order ASC, created_at ASC').all();
+}
+
+function addSheetColumn({ key, label, type = 'text' }) {
+  const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM sheet_columns').get().m;
+  db.prepare(
+    'INSERT OR REPLACE INTO sheet_columns (key, label, type, sort_order, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(key, label, type, max + 1, Date.now());
+  return listSheetColumns();
+}
+
+function removeSheetColumn(key) {
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM sheet_cells WHERE column_key = ?').run(key);
+    db.prepare('DELETE FROM sheet_columns WHERE key = ?').run(key);
+  });
+  tx();
+  return listSheetColumns();
+}
+
+function reorderSheetColumns(keys) {
+  const stmt = db.prepare('UPDATE sheet_columns SET sort_order = ? WHERE key = ?');
+  const tx = db.transaction((arr) => arr.forEach((k, i) => stmt.run(i, k)));
+  tx(keys);
+  return listSheetColumns();
+}
+
+function getCells(codes, columnKeys) {
+  if (!Array.isArray(codes) || !Array.isArray(columnKeys) || codes.length === 0 || columnKeys.length === 0) {
+    return {};
+  }
+  const codePlaceholders = codes.map(() => '?').join(',');
+  const colPlaceholders = columnKeys.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT code, column_key, value FROM sheet_cells WHERE code IN (${codePlaceholders}) AND column_key IN (${colPlaceholders})`
+  ).all(...codes, ...columnKeys);
+  // { 'code': { 'colKey': 'value' } }
+  const map = {};
+  for (const r of rows) {
+    if (!map[r.code]) map[r.code] = {};
+    map[r.code][r.column_key] = r.value;
+  }
+  return map;
+}
+
+function setCell(code, columnKey, value) {
+  if (value == null || value === '') {
+    db.prepare('DELETE FROM sheet_cells WHERE code = ? AND column_key = ?').run(code, columnKey);
+  } else {
+    db.prepare(
+      'INSERT OR REPLACE INTO sheet_cells (code, column_key, value, updated_at) VALUES (?, ?, ?, ?)'
+    ).run(code, columnKey, String(value), Date.now());
+  }
+  return true;
+}
+
 module.exports = {
   openWarehouse, getDb, getLastSyncAt,
-  upsertStocks, countStocks, listStocks, searchStocks,
+  upsertStocks, countStocks, listStocks, searchStocks, seedStocksIfEmpty,
   loadCandles, loadIndicators,
-  listWatchlist, addWatch, removeWatch, reorderWatch, seedWatchlistIfEmpty, seedStocksIfEmpty,
   listNotes, addNote, removeNote,
   saveWorkspace, loadWorkspace, listWorkspaces, deleteWorkspace,
+  // shares + market cap
+  upsertShares, countStocksWithShares, getSharesBaselineDate,
+  listAvailableDates, listRanking,
+  // sheet
+  listSheetColumns, addSheetColumn, removeSheetColumn, reorderSheetColumns,
+  getCells, setCell,
 };

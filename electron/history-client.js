@@ -53,4 +53,26 @@ async function getHistoricalCandles(code, { period = 'D', market = 'KOSPI', year
     }));
 }
 
-module.exports = { getHistoricalCandles, toYahooSymbol };
+async function fetchSharesOutstanding(code, { market = 'KOSPI' } = {}) {
+  const symbol = toYahooSymbol(code, market);
+  let lastErr;
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    try {
+      const r = await yahooFinance.quoteSummary(symbol, {
+        modules: ['defaultKeyStatistics', 'price'],
+      });
+      const shares =
+        r?.defaultKeyStatistics?.sharesOutstanding ||
+        r?.price?.sharesOutstanding ||
+        null;
+      return shares ? Math.round(shares) : null;
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 3 || !isRateLimitErr(e)) throw e;
+      await sleep(500 * Math.pow(3, attempt));
+    }
+  }
+  throw lastErr;
+}
+
+module.exports = { getHistoricalCandles, fetchSharesOutstanding, toYahooSymbol };

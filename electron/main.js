@@ -5,17 +5,21 @@ const path = require('path');
 const { getUserDataPath } = require('./userdata');
 const {
   openWarehouse, getDb, getLastSyncAt,
-  countStocks, listStocks, searchStocks,
+  countStocks, listStocks, searchStocks, seedStocksIfEmpty,
   loadCandles, loadIndicators,
-  listWatchlist, addWatch, removeWatch, reorderWatch, seedWatchlistIfEmpty, seedStocksIfEmpty,
   listNotes, addNote, removeNote,
   saveWorkspace, loadWorkspace, listWorkspaces, deleteWorkspace,
+  countStocksWithShares, getSharesBaselineDate, upsertShares,
+  listAvailableDates, listRanking,
+  listSheetColumns, addSheetColumn, removeSheetColumn, reorderSheetColumns,
+  getCells, setCell,
 } = require('./warehouse');
 const { syncOne } = require('./sync');
 const { toWeekly, toMonthly } = require('./aggregate');
 const { Scheduler } = require('./scheduler');
 const { PatternRuntime } = require('./pattern-runtime');
 const { runBacktest } = require('./backtest');
+const { fetchSharesOutstanding } = require('./history-client');
 
 const isDev = process.env.NODE_ENV === 'development';
 const isSmoke = process.env.MYH_SMOKE === '1';
@@ -25,6 +29,7 @@ if (isSmoke) app.disableHardwareAcceleration();
 let mainWindow;
 let scheduler;
 let patterns;
+let sharesSyncRunning = false;
 
 const isCode = (v) => typeof v === 'string' && /^\d{6}$/.test(v);
 const isPeriod = (v) => v === 'D' || v === 'W' || v === 'M';
@@ -68,7 +73,6 @@ app.whenReady().then(async () => {
   const userData = getUserDataPath();
   fs.mkdirSync(userData, { recursive: true });
 
-  // smoke 모드: fixture sqlite를 userData로 복사 (네트워크 없이 고정 데이터)
   if (isSmoke) {
     try {
       const fixtureSrc = app.isPackaged
@@ -87,9 +91,7 @@ app.whenReady().then(async () => {
 
   openWarehouse(userData);
   seedStocksIfEmpty(SEED);
-  seedWatchlistIfEmpty(SEED);
 
-  // dev: repo/patterns, prod: app.asar.unpacked/patterns (asarUnpack으로 풀림)
   const patternsPath = app.isPackaged
     ? path.join(process.resourcesPath, 'app.asar.unpacked', 'patterns')
     : path.join(__dirname, '..', 'patterns');
@@ -109,11 +111,17 @@ app.whenReady().then(async () => {
     });
     scheduler.start();
     if (!isSmoke) {
-      // 부팅 시 자동 증분 sync (smoke 모드에선 race 방지 위해 생략)
       setTimeout(() => {
         scheduler.runNow({ trigger: 'boot' }).catch((e) => console.error('[boot-sync]', e));
       }, 5000);
     }
+  }
+
+  // shares_outstanding 이 없으면 앱 유휴 시간에 백그라운드 수집 (smoke 모드 제외)
+  if (!isSmoke) {
+    setTimeout(() => {
+      ensureSharesInBackground().catch((e) => console.error('[shares:auto]', e));
+    }, 15000);
   }
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -124,6 +132,35 @@ app.on('before-quit', () => {
   try { scheduler?.stop(); } catch {}
   try { patterns?.stop(); } catch {}
 });
+
+async function ensureSharesInBackground() {
+  if (sharesSyncRunning) return;
+  const stocks = listStocks();
+  const withShares = countStocksWithShares();
+  if (withShares >= stocks.length * 0.8) return;  // 80% 이상이면 skip
+  sharesSyncRunning = true;
+  mainWindow?.webContents.send('shares:start', { total: stocks.length });
+  const pLimit = (await import('p-limit')).default;
+  const limit = pLimit(5);
+  let done = 0, ok = 0, fail = 0;
+  const batch = [];
+  const flush = () => { if (batch.length > 0) upsertShares(batch.splice(0)); };
+  const tasks = stocks.map((s) =>
+    limit(async () => {
+      try {
+        const n = await fetchSharesOutstanding(s.code, { market: s.market });
+        if (n) { batch.push({ code: s.code, shares: n }); ok++; } else fail++;
+      } catch { fail++; }
+      done++;
+      if (batch.length >= 50) flush();
+      if (done % 50 === 0) mainWindow?.webContents.send('shares:progress', { done, total: stocks.length, ok, fail });
+    })
+  );
+  await Promise.all(tasks);
+  flush();
+  sharesSyncRunning = false;
+  mainWindow?.webContents.send('shares:done', { done, total: stocks.length, ok, fail });
+}
 
 // ─── IPC ───
 ipcMain.handle('app:version', () => app.getVersion());
@@ -145,7 +182,6 @@ ipcMain.handle('candles:get', async (_e, arg) => {
   const { code, period } = normalizeCodePeriod(arg);
   if (!code) return [];
 
-  // 주봉·월봉은 일봉에서 로컬 집계 (Yahoo 5년 한계 우회, 10년치 즉시 반환)
   if (period === 'W' || period === 'M') {
     let daily = loadCandles(code, 'D');
     if (daily.length === 0) {
@@ -185,17 +221,65 @@ async function refreshOne(stock, period) {
   mainWindow?.webContents.send('candles:updated', { code: stock.code, period, candles: fresh });
 }
 
-ipcMain.handle('watchlist:list', () => listWatchlist());
-ipcMain.handle('watchlist:add', (_e, { code, name } = {}) => {
-  if (!isCode(code) || typeof name !== 'string') return listWatchlist();
-  return addWatch(code, name);
-});
-ipcMain.handle('watchlist:remove', (_e, code) => isCode(code) ? removeWatch(code) : listWatchlist());
-ipcMain.handle('watchlist:reorder', (_e, codes) =>
-  Array.isArray(codes) && codes.every(isCode) ? reorderWatch(codes) : listWatchlist()
-);
-
 ipcMain.handle('stocks:search', (_e, q) => searchStocks(typeof q === 'string' ? q : ''));
+
+// ── Market cap ranking / sheet ─────────────────
+ipcMain.handle('marketcap:status', () => {
+  const total = countStocks();
+  const withShares = countStocksWithShares();
+  return {
+    total,
+    withShares,
+    ready: withShares > 0,
+    running: sharesSyncRunning,
+    baselineAt: getSharesBaselineDate(),
+  };
+});
+
+ipcMain.handle('marketcap:dates', (_e, { limit = 500 } = {}) => {
+  return listAvailableDates(limit);
+});
+
+ipcMain.handle('marketcap:ranking', (_e, arg = {}) => {
+  const { ts, market, search, limit = 3000, offset = 0 } = arg;
+  if (!Number.isInteger(ts)) return [];
+  const m = (market === 'KOSPI' || market === 'KOSDAQ') ? market : null;
+  const ranking = listRanking(ts, { market: m, search, limit, offset });
+  const columns = listSheetColumns();
+  if (columns.length === 0 || ranking.length === 0) return { rows: ranking, columns };
+  const codes = ranking.map((r) => r.code);
+  const keys = columns.map((c) => c.key);
+  const cells = getCells(codes, keys);
+  const rows = ranking.map((r) => ({ ...r, cells: cells[r.code] || {} }));
+  return { rows, columns };
+});
+
+ipcMain.handle('sheet:columns:list', () => listSheetColumns());
+ipcMain.handle('sheet:columns:add', (_e, arg = {}) => {
+  const { key, label, type } = arg;
+  if (typeof key !== 'string' || !/^[a-z0-9_]{1,32}$/i.test(key)) return listSheetColumns();
+  if (typeof label !== 'string' || label.trim().length === 0) return listSheetColumns();
+  const t = ['text', 'number', 'bool'].includes(type) ? type : 'text';
+  return addSheetColumn({ key, label: label.trim(), type: t });
+});
+ipcMain.handle('sheet:columns:remove', (_e, key) => {
+  if (typeof key !== 'string') return listSheetColumns();
+  return removeSheetColumn(key);
+});
+ipcMain.handle('sheet:columns:reorder', (_e, keys) => {
+  if (!Array.isArray(keys)) return listSheetColumns();
+  return reorderSheetColumns(keys);
+});
+ipcMain.handle('sheet:cell:set', (_e, arg = {}) => {
+  const { code, columnKey, value } = arg;
+  if (!isCode(code) || typeof columnKey !== 'string') return false;
+  return setCell(code, columnKey, value);
+});
+
+ipcMain.handle('shares:ensure', async () => {
+  ensureSharesInBackground().catch(() => {});
+  return { started: true };
+});
 
 // 패턴
 ipcMain.handle('patterns:list', () => patterns?.list() || []);
