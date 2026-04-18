@@ -26,6 +26,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ running: false, lastSyncAt: null, total: 0 });
   const [syncProg, setSyncProg] = useState(null);
+  const [marketcapStatus, setMarketcapStatus] = useState({ ready: false, running: false, total: 0, withShares: 0 });
+  const [sharesProg, setSharesProg] = useState(null);
 
   // test hooks: Playwright 에서 chart 인스턴스/상태 직접 접근
   useEffect(() => {
@@ -67,7 +69,24 @@ export default function Home() {
     const offExt = window.api.onExternalSelectStock?.((s) => {
       if (s?.code && s?.name) setSelected({ code: s.code, name: s.name });
     });
-    return () => { offP(); offStart(); offProg(); offDone(); offExt?.(); };
+
+    // 시총 데이터 수집 상태
+    const refreshMarketcap = () => window.api.getMarketCapStatus?.().then((s) => s && setMarketcapStatus(s));
+    refreshMarketcap();
+    const offSStart = window.api.onSharesStart?.((p) => {
+      setSharesProg({ done: 0, total: p.total, ok: 0, fail: 0 });
+      setMarketcapStatus((s) => ({ ...s, running: true }));
+    });
+    const offSProg = window.api.onSharesProgress?.((p) => {
+      setSharesProg({ done: p.done, total: p.total, ok: p.ok, fail: p.fail });
+      setMarketcapStatus((s) => ({ ...s, withShares: p.ok, running: true }));
+    });
+    const offSDone = window.api.onSharesDone?.((p) => {
+      setSharesProg(null);
+      refreshMarketcap();
+    });
+
+    return () => { offP(); offStart(); offProg(); offDone(); offExt?.(); offSStart?.(); offSProg?.(); offSDone?.(); };
   }, []);
 
   useEffect(() => {
@@ -256,10 +275,34 @@ export default function Home() {
           background: '#1a1d24', border: '1px solid #2a2f38', color: '#9aa',
           padding: '4px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
         }}>🔍 종목 검색 (⌘K)</button>
-        <button onClick={() => window.api?.openSheetWindow()} style={{
-          background: '#1a1d24', border: '1px solid #2a2f38', color: '#9aa',
-          padding: '4px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
-        }} title="시총 순위 창 열기 (⌘L)">📊 시총 창</button>
+        {(() => {
+          const canOpen = marketcapStatus.ready && !marketcapStatus.running;
+          const label = marketcapStatus.running
+            ? `수집 중 ${sharesProg ? `${sharesProg.done}/${sharesProg.total}` : ''}`
+            : !marketcapStatus.ready
+              ? '시총 데이터 없음'
+              : '시총 순위 창 열기 (⌘L)';
+          return (
+            <button
+              onClick={() => canOpen && window.api?.openSheetWindow()}
+              disabled={!canOpen}
+              style={{
+                background: '#1a1d24', border: '1px solid #2a2f38',
+                color: canOpen ? '#9aa' : '#555',
+                padding: '4px 10px', borderRadius: 4, fontSize: 12,
+                cursor: canOpen ? 'pointer' : 'not-allowed',
+              }}
+              title={label}
+            >
+              📊 시총 창
+              {marketcapStatus.running && sharesProg && (
+                <span style={{ marginLeft: 6, color: '#ffbb00', fontSize: 10 }}>
+                  {sharesProg.done}/{sharesProg.total}
+                </span>
+              )}
+            </button>
+          );
+        })()}
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#9aa', display: 'flex', gap: 10, alignItems: 'center' }}>
           {syncProg ? (
             <span style={{ color: '#ffbb00' }}>

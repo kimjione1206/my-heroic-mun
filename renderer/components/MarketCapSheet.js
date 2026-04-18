@@ -35,6 +35,7 @@ export default function MarketCapSheet({ selectedCode, onSelect }) {
   const [height, setHeight] = useState(400);
   const [addColOpen, setAddColOpen] = useState(false);
   const containerRef = useRef(null);
+  const listRef = useRef(null);
 
   useEffect(() => {
     if (!window.api) return;
@@ -184,8 +185,43 @@ export default function MarketCapSheet({ selectedCode, onSelect }) {
     await loadRanking();
   };
 
+  // 방향키 네비게이션 (↑↓ 로 종목 선택 이동, 차트로 자동 전달)
+  const moveSelection = (delta) => {
+    if (rows.length === 0) return;
+    const currentIdx = Math.max(0, rows.findIndex((r) => r.code === selectedCode));
+    const nextIdx = Math.max(0, Math.min(rows.length - 1, currentIdx + delta));
+    const next = rows[nextIdx];
+    if (!next) return;
+    const stock = { code: next.code, name: next.name };
+    onSelect?.(stock);
+    window.api?.selectStock?.(stock);
+    listRef.current?.scrollToItem(nextIdx, 'smart');
+  };
+
+  const onKeyDown = (e) => {
+    // input·select 등에 포커스 있을 때는 무시
+    const tag = (e.target?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1); }
+    else if (e.key === 'PageDown') { e.preventDefault(); moveSelection(10); }
+    else if (e.key === 'PageUp') { e.preventDefault(); moveSelection(-10); }
+    else if (e.key === 'Home') { e.preventDefault(); moveSelection(-rows.length); }
+    else if (e.key === 'End') { e.preventDefault(); moveSelection(rows.length); }
+  };
+
+  // 최초 로드 + 종목 외부 변경 시 자동 포커스
+  useEffect(() => {
+    containerRef.current?.focus?.();
+  }, [rows.length > 0]);
+
   return (
-    <div ref={containerRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <div
+      ref={containerRef}
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', outline: 'none' }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', flexWrap: 'wrap' }}>
         <select
           data-testid="date-select"
@@ -248,6 +284,7 @@ export default function MarketCapSheet({ selectedCode, onSelect }) {
         </div>
 
         <List
+          ref={listRef}
           height={height}
           itemCount={rows.length}
           itemSize={ROW_H}

@@ -36,6 +36,15 @@ let sharesSyncRunning = false;
 const RENDERER_OUT = path.join(__dirname, '..', 'renderer', 'out');
 const PRELOAD = path.join(__dirname, 'preload.js');
 
+// KST (UTC+9) 기준 같은 날인지 비교
+function isSameKstDay(tsA, tsB) {
+  const toKst = (ts) => new Date(ts + 9 * 3600000);
+  const a = toKst(tsA), b = toKst(tsB);
+  return a.getUTCFullYear() === b.getUTCFullYear()
+    && a.getUTCMonth() === b.getUTCMonth()
+    && a.getUTCDate() === b.getUTCDate();
+}
+
 const isCode = (v) => typeof v === 'string' && /^\d{6}$/.test(v);
 const isPeriod = (v) => v === 'D' || v === 'W' || v === 'M';
 const normalizeCodePeriod = ({ code, period = 'D' } = {}) => ({
@@ -116,7 +125,19 @@ function buildMenu() {
         {
           label: '시총 창 열기',
           accelerator: 'CommandOrControl+L',
-          click: () => createSheetWindow(),
+          click: () => {
+            if (!isSmoke) {
+              if (sharesSyncRunning || countStocksWithShares() === 0) {
+                mainWindow?.webContents.send('sheet:blocked', {
+                  reason: sharesSyncRunning ? 'running' : 'no-shares',
+                  withShares: countStocksWithShares(),
+                  total: countStocks(),
+                });
+                return;
+              }
+            }
+            createSheetWindow();
+          },
         },
         { type: 'separator' },
         { role: 'minimize' },
@@ -170,7 +191,14 @@ app.whenReady().then(async () => {
     });
     scheduler.start();
     if (!isSmoke) {
+      // 오늘(KST 기준) 이미 동기화됐으면 네트워크 호출 스킵
       setTimeout(() => {
+        const lastSync = getLastSyncAt('D');
+        if (lastSync && isSameKstDay(lastSync, Date.now())) {
+          console.log(`[boot-sync] skipped — 이미 오늘 (${new Date(lastSync).toLocaleString('ko-KR')}) 동기화됨`);
+          mainWindow?.webContents.send('sync:skipped', { lastSyncAt: lastSync, reason: 'already-today' });
+          return;
+        }
         scheduler.runNow({ trigger: 'boot' }).catch((e) => console.error('[boot-sync]', e));
       }, 5000);
     }
@@ -238,6 +266,17 @@ ipcMain.handle('window:select-stock', (e, stock) => {
   });
 });
 ipcMain.handle('window:open-sheet', () => {
+  if (!isSmoke) {
+    // 진행 중이거나 전혀 수집 안 됐으면 막음
+    if (sharesSyncRunning || countStocksWithShares() === 0) {
+      mainWindow?.webContents.send('sheet:blocked', {
+        reason: sharesSyncRunning ? 'running' : 'no-shares',
+        withShares: countStocksWithShares(),
+        total: countStocks(),
+      });
+      return false;
+    }
+  }
   createSheetWindow();
   return true;
 });
