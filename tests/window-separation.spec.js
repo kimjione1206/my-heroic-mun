@@ -33,15 +33,20 @@ test('[win-3] 시총 창 닫기 → 차트 창 생존', async () => {
   try {
     await waitForChartReady(chartWindow);
     await sheetWindow.close();
-    // 차트 창은 계속 반응
     const version = await chartWindow.evaluate(() => window.api.getVersion());
     expect(typeof version).toBe('string');
-    // 시총 창 다시 열기
-    const waitForSheet = app.waitForEvent('window');
+    // 시총 창 다시 열기 — URL 필터로 검출
     await chartWindow.evaluate(() => window.api.openSheetWindow());
-    const reopened = await waitForSheet;
-    await reopened.waitForLoadState('domcontentloaded');
+    const deadline = Date.now() + 10_000;
+    let reopened = null;
+    while (Date.now() < deadline && !reopened) {
+      reopened = app.windows().find((w) => {
+        try { return /sheet(\.html)?$/.test(w.url()); } catch { return false; }
+      });
+      if (!reopened) await new Promise((r) => setTimeout(r, 150));
+    }
     expect(reopened).toBeTruthy();
+    await reopened.waitForLoadState('domcontentloaded');
   } finally {
     await app.close();
   }

@@ -36,9 +36,17 @@ async function launchApp({ openSheet = true } = {}) {
 
   let sheetWindow = null;
   if (openSheet) {
-    const waitForSheet = app.waitForEvent('window');
     await chartWindow.evaluate(() => window.api.openSheetWindow());
-    sheetWindow = await waitForSheet;
+    // URL 에 sheet 가 포함된 창 찾기 (waitForEvent 는 chart 창을 재반환할 수 있음)
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const found = app.windows().find((w) => {
+        try { return /sheet(\.html)?$/.test(w.url()); } catch { return false; }
+      });
+      if (found) { sheetWindow = found; break; }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (!sheetWindow) throw new Error('sheet window did not appear in 20s');
     await sheetWindow.waitForLoadState('domcontentloaded');
     await sheetWindow.waitForFunction(() => !!window.api, null, { timeout: 20_000 });
   }
