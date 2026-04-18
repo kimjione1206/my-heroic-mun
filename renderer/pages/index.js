@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
 import StockSearch from '../components/StockSearch';
 import ChartToolbar, { INDICATORS } from '../components/ChartToolbar';
 import PatternList from '../components/PatternList';
 import BottomPanel from '../components/BottomPanel';
 import { registerVolumeRankIndicator, VOLUME_RANK_INDICATOR } from '../lib/volume-rank-indicator';
-
-// react-window는 DOM 측정에 의존 → SSR에서 실행 불가. 클라이언트 전용으로 로드.
-const MarketCapSheet = dynamic(() => import('../components/MarketCapSheet'), { ssr: false });
 
 const INITIAL_SELECTED = { code: '005930', name: '삼성전자' };
 const DEFAULT_INDICATORS = { MA: true, BOLL: false, EMA: false, RSI: false, MACD: false, KDJ: false };
@@ -67,7 +63,11 @@ export default function Home() {
       setSyncProg(null);
       setSyncStatus({ running: false, lastSyncAt: p.at, total: p.total });
     });
-    return () => { offP(); offStart(); offProg(); offDone(); };
+    // 외부 창(시총 시트)에서 종목 선택 시 차트 갱신
+    const offExt = window.api.onExternalSelectStock?.((s) => {
+      if (s?.code && s?.name) setSelected({ code: s.code, name: s.name });
+    });
+    return () => { offP(); offStart(); offProg(); offDone(); offExt?.(); };
   }, []);
 
   useEffect(() => {
@@ -256,6 +256,10 @@ export default function Home() {
           background: '#1a1d24', border: '1px solid #2a2f38', color: '#9aa',
           padding: '4px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
         }}>🔍 종목 검색 (⌘K)</button>
+        <button onClick={() => window.api?.openSheetWindow()} style={{
+          background: '#1a1d24', border: '1px solid #2a2f38', color: '#9aa',
+          padding: '4px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
+        }} title="시총 순위 창 열기 (⌘L)">📊 시총 창</button>
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#9aa', display: 'flex', gap: 10, alignItems: 'center' }}>
           {syncProg ? (
             <span style={{ color: '#ffbb00' }}>
@@ -283,13 +287,6 @@ export default function Home() {
           <span>{selected.name} ({selected.code}) · {period === 'D' ? '일봉' : period === 'W' ? '주봉' : '월봉'}</span>
         </span>
       </header>
-
-      <aside className="left" style={{ padding: 0, overflow: 'hidden' }}>
-        <MarketCapSheet
-          selectedCode={selected.code}
-          onSelect={(s) => setSelected(s)}
-        />
-      </aside>
 
       <main className="main">
         <ChartToolbar

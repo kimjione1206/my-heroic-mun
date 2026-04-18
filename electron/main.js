@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const { getUserDataPath } = require('./userdata');
+const { loadState, saveState } = require('./window-state');
 const {
   openWarehouse, getDb, getLastSyncAt,
   countStocks, listStocks, searchStocks, seedStocksIfEmpty,
@@ -27,9 +28,13 @@ const isSmoke = process.env.MYH_SMOKE === '1';
 // CI/smoke 모드: GPU 비활성화 (windows-latest 하드웨어 가속 불안정)
 if (isSmoke) app.disableHardwareAcceleration();
 let mainWindow;
+let sheetWindow;
 let scheduler;
 let patterns;
 let sharesSyncRunning = false;
+
+const RENDERER_OUT = path.join(__dirname, '..', 'renderer', 'out');
+const PRELOAD = path.join(__dirname, 'preload.js');
 
 const isCode = (v) => typeof v === 'string' && /^\d{6}$/.test(v);
 const isPeriod = (v) => v === 'D' || v === 'W' || v === 'M';
@@ -46,27 +51,80 @@ const SEED = [
   { code: '005380', name: '현대차' },
 ];
 
-function createWindow() {
+function createMainWindow() {
+  const bounds = loadState('main', { width: 1400, height: 900 });
   mainWindow = new BrowserWindow({
-    width: 1600, height: 1000, minWidth: 1280, minHeight: 800,
+    ...bounds,
+    minWidth: 1024, minHeight: 720,
     title: '나만의 영웅문', backgroundColor: '#0f1115',
-    show: true,
-    center: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false,
-    },
+    show: true, center: !bounds.x,
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:3000');
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'out', 'index.html'));
-  }
+  if (isDev) mainWindow.loadURL('http://localhost:3000');
+  else mainWindow.loadFile(path.join(RENDERER_OUT, 'index.html'));
+
   mainWindow.webContents.once('did-finish-load', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.show();
     mainWindow.focus();
   });
+  mainWindow.on('close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) saveState('main', mainWindow.getBounds());
+  });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    // 차트 창 종료 → 앱 전체 종료 (시총 창도 같이 닫힘)
+    app.quit();
+  });
+}
+
+function createSheetWindow() {
+  if (sheetWindow && !sheetWindow.isDestroyed()) {
+    if (sheetWindow.isMinimized()) sheetWindow.restore();
+    sheetWindow.show();
+    sheetWindow.focus();
+    return sheetWindow;
+  }
+  const bounds = loadState('sheet', { width: 720, height: 900 });
+  sheetWindow = new BrowserWindow({
+    ...bounds,
+    minWidth: 520, minHeight: 500,
+    title: '시총 순위', backgroundColor: '#0f1115',
+    show: true, center: !bounds.x,
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
+  });
+  if (isDev) sheetWindow.loadURL('http://localhost:3000/sheet');
+  else sheetWindow.loadFile(path.join(RENDERER_OUT, 'sheet', 'index.html'));
+
+  sheetWindow.on('close', () => {
+    if (sheetWindow && !sheetWindow.isDestroyed()) saveState('sheet', sheetWindow.getBounds());
+  });
+  sheetWindow.on('closed', () => { sheetWindow = null; });
+  return sheetWindow;
+}
+
+function buildMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    {
+      label: '윈도우',
+      submenu: [
+        {
+          label: '시총 창 열기',
+          accelerator: 'CommandOrControl+L',
+          click: () => createSheetWindow(),
+        },
+        { type: 'separator' },
+        { role: 'minimize' },
+        { role: 'close' },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 app.whenReady().then(async () => {
@@ -97,7 +155,8 @@ app.whenReady().then(async () => {
     : path.join(__dirname, '..', 'patterns');
   patterns = new PatternRuntime(patternsPath, () => mainWindow);
 
-  createWindow();
+  buildMenu();
+  createMainWindow();
 
   const stocksForSync = listStocks();
   if (stocksForSync.length > 0) {
@@ -124,10 +183,17 @@ app.whenReady().then(async () => {
     }, 15000);
   }
 
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => { if (!mainWindow) createMainWindow(); });
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+function broadcast(channel, payload) {
+  [mainWindow, sheetWindow].forEach((w) => {
+    if (!w || w.isDestroyed()) return;
+    w.webContents.send(channel, payload);
+  });
+}
 app.on('before-quit', () => {
   try { scheduler?.stop(); } catch {}
   try { patterns?.stop(); } catch {}
@@ -161,6 +227,23 @@ async function ensureSharesInBackground() {
   sharesSyncRunning = false;
   mainWindow?.webContents.send('shares:done', { done, total: stocks.length, ok, fail });
 }
+
+// ─── IPC: 창 간 선택 동기화 ───
+ipcMain.handle('window:select-stock', (e, stock) => {
+  if (!stock || typeof stock.code !== 'string') return;
+  [mainWindow, sheetWindow].forEach((w) => {
+    if (!w || w.isDestroyed()) return;
+    if (w.webContents === e.sender) return;  // 에코 방지
+    w.webContents.send('external:select-stock', stock);
+  });
+});
+ipcMain.handle('window:open-sheet', () => {
+  createSheetWindow();
+  return true;
+});
+ipcMain.handle('window:is-sheet-open', () =>
+  !!sheetWindow && !sheetWindow.isDestroyed()
+);
 
 // ─── IPC ───
 ipcMain.handle('app:version', () => app.getVersion());

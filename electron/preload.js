@@ -46,6 +46,12 @@ contextBridge.exposeInMainWorld('api', {
   getSyncStatus: () => ipcRenderer.invoke('sync:status'),
   runSyncNow: () => ipcRenderer.invoke('sync:run-now'),
 
+  // 멀티 윈도우 선택 동기화
+  selectStock: (stock) => ipcRenderer.invoke('window:select-stock', stock),
+  openSheetWindow: () => ipcRenderer.invoke('window:open-sheet'),
+  isSheetOpen: () => ipcRenderer.invoke('window:is-sheet-open'),
+  onExternalSelectStock: (cb) => on('external:select-stock', cb),
+
   onCandlesUpdated: (cb) => on('candles:updated', cb),
   onPatternsChanged: (cb) => on('patterns:changed', cb),
   onSyncProgress: (cb) => on('sync:progress', cb),

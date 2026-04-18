@@ -111,7 +111,11 @@ export default function MarketCapSheet({ selectedCode, onSelect }) {
       <div
         data-testid="rank-row"
         data-code={r.code}
-        onClick={() => onSelect?.({ code: r.code, name: r.name })}
+        onClick={() => {
+          const s = { code: r.code, name: r.name };
+          onSelect?.(s);
+          window.api?.selectStock?.(s);
+        }}
         style={{
           ...style,
           display: 'flex',
