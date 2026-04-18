@@ -114,7 +114,6 @@ export default function Home() {
         },
       });
       chart.createIndicator('VOL');
-      chart.createIndicator(VOLUME_RANK_INDICATOR, false, { id: 'candle_pane' });
       chartInstance.current = chart;
 
       for (const ind of INDICATORS) {
@@ -135,14 +134,11 @@ export default function Home() {
           callback(candles, false);
         },
       });
-      // 초기 진입 시 volumeRankCandle 인디케이터는 데이터 도착 전 draw 되어 색이 안 먹음.
-      // setDataLoader 이후 override로 강제 재계산 + 프레임 대기 후 한 번 더.
-      requestAnimationFrame(() => {
-        try { chart.overrideIndicator({ name: VOLUME_RANK_INDICATOR }); } catch {}
-        requestAnimationFrame(() => {
-          try { chart.overrideIndicator({ name: VOLUME_RANK_INDICATOR }); } catch {}
-        });
-      });
+
+      // volumeRankCandle 인디케이터는 반드시 데이터 로드 이후 생성해야 첫 draw에서 색이 들어감.
+      // setDataLoader에서 데이터 반영 후 다음 프레임에 indicator 생성.
+      await new Promise((r) => requestAnimationFrame(() => r()));
+      try { chart.createIndicator(VOLUME_RANK_INDICATOR, false, { id: 'candle_pane' }); } catch {}
       updateSummary(candles);
       await renderPatternOverlays(chart, kline);
 
