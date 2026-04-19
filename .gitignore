@@ -7,6 +7,7 @@ test-results/
 playwright-report/
 test/fixtures/*.sqlite
 test/fixtures/*.sqlite-*
+test/fixtures/*.sqlite.gz
 *.log
 .env
 .env.local
