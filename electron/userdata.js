@@ -10,6 +10,9 @@ const os = require('os');
 const APP_NAME = 'my-heroic-mun';
 
 function getUserDataPath() {
+  // 테스트/격리 실행 시 환경변수로 userData 경로 주입 가능
+  if (process.env.MYH_USERDATA) return process.env.MYH_USERDATA;
+
   try {
     const { app } = require('electron');
     if (app?.getPath) return app.getPath('userData');

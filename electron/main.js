@@ -24,6 +24,8 @@ const { fetchSharesOutstanding } = require('./history-client');
 
 const isDev = process.env.NODE_ENV === 'development';
 const isSmoke = process.env.MYH_SMOKE === '1';
+// 네트워크 호출 전부 차단 (테스트·오프라인 모드)
+const noNet = isSmoke || process.env.MYH_NO_NET === '1';
 
 // CI/smoke 모드: GPU 비활성화 (windows-latest 하드웨어 가속 불안정)
 if (isSmoke) app.disableHardwareAcceleration();
@@ -127,7 +129,7 @@ function buildMenu() {
           label: '시총 창 열기',
           accelerator: 'CommandOrControl+L',
           click: () => {
-            if (!isSmoke) {
+            if (!noNet) {
               if (sharesSyncRunning || countStocksWithShares() === 0) {
                 mainWindow?.webContents.send('sheet:blocked', {
                   reason: sharesSyncRunning ? 'running' : 'no-shares',
@@ -153,19 +155,35 @@ app.whenReady().then(async () => {
   const userData = getUserDataPath();
   fs.mkdirSync(userData, { recursive: true });
 
+  const userDb = path.join(userData, 'warehouse.sqlite');
+
   if (isSmoke) {
     try {
       const fixtureSrc = app.isPackaged
         ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'smoke-warehouse.sqlite')
         : path.join(__dirname, '..', 'test', 'fixtures', 'smoke-warehouse.sqlite');
-      const dest = path.join(userData, 'warehouse.sqlite');
       console.log(`[smoke] fixtureSrc=${fixtureSrc} exists=${fs.existsSync(fixtureSrc)}`);
       if (fs.existsSync(fixtureSrc)) {
-        fs.copyFileSync(fixtureSrc, dest);
+        fs.copyFileSync(fixtureSrc, userDb);
         console.log('[smoke] fixture warehouse copied');
       }
     } catch (e) {
       console.error('[smoke] fixture copy failed:', e.message);
+    }
+  } else if (!fs.existsSync(userDb)) {
+    // 최초 설치: 번들 release seed DB 를 userData 로 복사 (전체 종목 · 10년 데이터 즉시 사용)
+    try {
+      const releaseSrc = app.isPackaged
+        ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'release-warehouse.sqlite')
+        : path.join(__dirname, '..', 'test', 'fixtures', 'release-warehouse.sqlite');
+      if (fs.existsSync(releaseSrc)) {
+        fs.copyFileSync(releaseSrc, userDb);
+        console.log(`[bootstrap] release DB copied from ${releaseSrc}`);
+      } else {
+        console.log('[bootstrap] release DB 없음 — SEED 로 최소 시작');
+      }
+    } catch (e) {
+      console.error('[bootstrap] release DB copy failed:', e.message);
     }
   }
 
@@ -191,7 +209,7 @@ app.whenReady().then(async () => {
       onDone: (p) => mainWindow?.webContents.send('sync:done', p),
     });
     scheduler.start();
-    if (!isSmoke) {
+    if (!noNet) {
       // 오늘(KST 기준) 이미 동기화됐으면 네트워크 호출 스킵
       setTimeout(() => {
         const lastSync = getLastSyncAt('D');
@@ -205,8 +223,8 @@ app.whenReady().then(async () => {
     }
   }
 
-  // shares_outstanding 이 없으면 앱 유휴 시간에 백그라운드 수집 (smoke 모드 제외)
-  if (!isSmoke) {
+  // shares_outstanding 이 없으면 앱 유휴 시간에 백그라운드 수집 (네트워크 모드만)
+  if (!noNet) {
     setTimeout(() => {
       ensureSharesInBackground().catch((e) => console.error('[shares:auto]', e));
     }, 15000);
@@ -274,7 +292,7 @@ ipcMain.handle('window:select-stock', (e, stock) => {
   });
 });
 ipcMain.handle('window:open-sheet', () => {
-  if (!isSmoke) {
+  if (!noNet) {
     // 진행 중이거나 전혀 수집 안 됐으면 막음
     if (sharesSyncRunning || countStocksWithShares() === 0) {
       mainWindow?.webContents.send('sheet:blocked', {
@@ -316,11 +334,11 @@ ipcMain.handle('candles:get', async (_e, arg) => {
     let daily = loadCandles(code, 'D');
     if (daily.length === 0) {
       const stock = listStocks().find((s) => s.code === code);
-      if (stock && !isSmoke) {
+      if (stock && !noNet) {
         await syncOne(getDb(), stock, { mode: 'full', period: 'D', years: 10 });
         daily = loadCandles(code, 'D');
       }
-    } else if (!isSmoke) {
+    } else if (!noNet) {
       const stock = listStocks().find((s) => s.code === code);
       if (stock) refreshOne(stock, 'D').catch(() => {});
     }
@@ -329,16 +347,16 @@ ipcMain.handle('candles:get', async (_e, arg) => {
 
   const cached = loadCandles(code, period);
   if (cached.length > 0) {
-    if (!isSmoke) {
+    if (!noNet) {
       const stock = listStocks().find((s) => s.code === code);
       if (stock) refreshOne(stock, period).catch(() => {});
     }
     return cached;
   }
-  if (isSmoke) return [];
+  if (noNet) return [];
   const stock = listStocks().find((s) => s.code === code);
   if (!stock) return [];
-  await syncOne(getDb(), stock, { mode: 'full', period, years: 5 });
+  await syncOne(getDb(), stock, { mode: 'full', period, years: 10 });
   return loadCandles(code, period);
 });
 

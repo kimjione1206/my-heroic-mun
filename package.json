@@ -19,6 +19,7 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "seed:smoke": "node scripts/rebuild-toggle.js node && node test/fixtures/seed-smoke.js && node scripts/rebuild-toggle.js electron",
+    "prepare:release": "node scripts/rebuild-toggle.js node && node scripts/prepare-release.js && node scripts/rebuild-toggle.js electron",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },

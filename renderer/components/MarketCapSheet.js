@@ -218,6 +218,7 @@ export default function MarketCapSheet({ selectedCode, onSelect }) {
   return (
     <div
       ref={containerRef}
+      data-testid="sheet-container"
       tabIndex={0}
       onKeyDown={onKeyDown}
       style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', outline: 'none' }}

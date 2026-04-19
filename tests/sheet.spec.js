@@ -9,9 +9,13 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await app?.close(); });
 
-test('[sheet-1] 시총 창 랭킹 렌더 (fixture 2종목)', async () => {
+test('[sheet-1] 시총 창 랭킹 렌더 (fixture 10종목)', async () => {
   const rows = sheetWindow.locator('[data-testid="rank-row"]');
-  await expect(rows).toHaveCount(2);
+  const n = await rows.count();
+  expect(n).toBeGreaterThanOrEqual(10);
+  // KOSPI + KOSDAQ 혼재 렌더 확인
+  await expect(sheetWindow.locator('[data-testid="rank-row"][data-code="005930"]')).toBeVisible();
+  await expect(sheetWindow.locator('[data-testid="rank-row"][data-code="247540"]')).toBeVisible();
 });
 
 test('[sheet-2] 날짜 드롭다운 존재 + 옵션 있음', async () => {
