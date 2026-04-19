@@ -69,6 +69,35 @@ jobs:
         # seed:smoke 스크립트가 Node ABI로 리빌드 → seed → Electron ABI 복원
         run: npm run seed:smoke
 
+      # 릴리스 seed DB (전 종목 · 10년 데이터, gzip 압축) 다운로드 후 해제
+      # - GitHub Release 태그 "seed-latest" 의 release-warehouse.sqlite.gz 에셋
+      # - 없으면 skip (build 는 계속 진행, installer 는 SEED 폴백 상태로 빌드됨)
+      - name: Download release seed DB
+        id: seed
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $url = "https://github.com/${{ github.repository }}/releases/download/seed-latest/release-warehouse.sqlite.gz"
+          $gz = "test/fixtures/release-warehouse.sqlite.gz"
+          $dest = "test/fixtures/release-warehouse.sqlite"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $gz -Headers @{ "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}" } -ErrorAction Stop
+            $szGz = (Get-Item $gz).Length / 1MB
+            Write-Host "✓ gzipped seed 다운로드 완료: $([math]::Round($szGz, 1)) MB"
+            # gzip 해제
+            $inStream = [System.IO.File]::OpenRead($gz)
+            $outStream = [System.IO.File]::Create($dest)
+            $gzipStream = New-Object System.IO.Compression.GZipStream($inStream, [System.IO.Compression.CompressionMode]::Decompress)
+            $gzipStream.CopyTo($outStream)
+            $gzipStream.Close(); $outStream.Close(); $inStream.Close()
+            Remove-Item $gz
+            $sz = (Get-Item $dest).Length / 1MB
+            Write-Host "✓ seed 해제 완료: $([math]::Round($sz, 1)) MB"
+          } catch {
+            Write-Host "⚠ release seed 없음 — SEED 폴백으로 빌드"
+            Write-Host $_
+          }
+
       - name: Package Windows NSIS installer
         run: npx electron-builder --win nsis
         env:
