@@ -65,28 +65,43 @@ test('[boot-1] release seed 없으면 SEED(5종목)로 폴백', async () => {
   }
 });
 
-test('[boot-2] 기존 warehouse.sqlite 존재 시 덮어쓰지 않음', async () => {
+test('[boot-2] 기존 warehouse.sqlite 존재 시 덮어쓰지 않음 (재기동 시 사용자 데이터 보존)', async () => {
   const { app, tmpDir, cleanup } = await launchWithIsolatedUserData({ withReleaseSeed: false });
+  let app2 = null;
   try {
     const win = await app.firstWindow();
     await win.waitForFunction(() => !!window.api, null, { timeout: 20_000 });
-    // 사용자 데이터: 메모 1개 추가
-    await win.evaluate(() => window.api.addNote('005930', Date.now(), 'boot-2 persist', 'test'));
-    await app.close();
+    const added = await win.evaluate(() => window.api.addNote('005930', Date.now(), 'boot-2 persist', 'test'));
+    expect(added).toBeTruthy();
+    const verify = await win.evaluate(() => window.api.listNotes('005930'));
+    expect(verify.some((n) => n.text === 'boot-2 persist')).toBe(true);
 
-    // 같은 userData 디렉토리로 재기동
+    const dbPath = path.join(tmpDir, 'warehouse.sqlite');
+    expect(fs.existsSync(dbPath)).toBe(true);
+    const sizeBefore = fs.statSync(dbPath).size;
+
+    await app.close();
+    // WAL checkpoint 시간 여유
+    await new Promise((r) => setTimeout(r, 500));
+
+    // 동일 userData 로 재기동 → 메모가 그대로 보여야 함
     const env = { ...process.env, NODE_ENV: 'production', MYH_USERDATA: tmpDir, MYH_NO_NET: '1' };
     const exe = findUnpackedExe();
     const launchOpts = exe
       ? { executablePath: exe, env, timeout: 30_000 }
       : { args: [path.join(PROJECT_ROOT, 'electron', 'main.js')], env, cwd: PROJECT_ROOT, timeout: 30_000 };
-    const app2 = await _electron.launch(launchOpts);
+    app2 = await _electron.launch(launchOpts);
     const win2 = await app2.firstWindow();
+    await win2.waitForLoadState('domcontentloaded');
     await win2.waitForFunction(() => !!window.api, null, { timeout: 20_000 });
     const notes = await win2.evaluate(() => window.api.listNotes('005930'));
     expect(notes.some((n) => n.text === 'boot-2 persist')).toBe(true);
-    await app2.close();
+
+    // DB 파일 크기가 줄어들지 않음 (덮어쓰기 없음)
+    const sizeAfter = fs.statSync(dbPath).size;
+    expect(sizeAfter).toBeGreaterThanOrEqual(sizeBefore);
   } finally {
+    try { await app2?.close(); } catch {}
     await cleanup(app);
   }
 });

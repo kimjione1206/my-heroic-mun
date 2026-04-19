@@ -29,6 +29,12 @@ const noNet = isSmoke || process.env.MYH_NO_NET === '1';
 
 // CI/smoke 모드: GPU 비활성화 (windows-latest 하드웨어 가속 불안정)
 if (isSmoke) app.disableHardwareAcceleration();
+
+// 테스트 격리: MYH_USERDATA 환경변수가 지정되면 Electron 기본 userData 경로도 재설정
+// (getUserDataPath() 헬퍼뿐 아니라 Electron 내부 캐시·쿠키도 격리 디렉토리로 이동)
+if (process.env.MYH_USERDATA) {
+  try { app.setPath('userData', process.env.MYH_USERDATA); } catch {}
+}
 let mainWindow;
 let sheetWindow;
 let scheduler;
