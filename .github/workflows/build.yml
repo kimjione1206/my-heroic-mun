@@ -70,18 +70,19 @@ jobs:
         run: npm run seed:smoke
 
       # 릴리스 seed DB (전 종목 · 10년 데이터, gzip 압축) 다운로드 후 해제
-      # - GitHub Release 태그 "seed-latest" 의 release-warehouse.sqlite.gz 에셋
-      # - 없으면 skip (build 는 계속 진행, installer 는 SEED 폴백 상태로 빌드됨)
+      # Private 레포 지원: gh CLI 로 API 호출 → gzip 해제 → electron-builder 가 번들
       - name: Download release seed DB
         id: seed
         continue-on-error: true
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $url = "https://github.com/${{ github.repository }}/releases/download/seed-latest/release-warehouse.sqlite.gz"
           $gz = "test/fixtures/release-warehouse.sqlite.gz"
           $dest = "test/fixtures/release-warehouse.sqlite"
           try {
-            Invoke-WebRequest -Uri $url -OutFile $gz -Headers @{ "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}" } -ErrorAction Stop
+            gh release download seed-latest --repo ${{ github.repository }} --pattern "release-warehouse.sqlite.gz" --output $gz
+            if (!(Test-Path $gz)) { throw "gh release download 결과 파일 없음" }
             $szGz = (Get-Item $gz).Length / 1MB
             Write-Host "✓ gzipped seed 다운로드 완료: $([math]::Round($szGz, 1)) MB"
             # gzip 해제
