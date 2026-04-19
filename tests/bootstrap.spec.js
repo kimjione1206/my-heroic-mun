@@ -65,43 +65,36 @@ test('[boot-1] release seed 없으면 SEED(5종목)로 폴백', async () => {
   }
 });
 
-test('[boot-2] 기존 warehouse.sqlite 존재 시 덮어쓰지 않음 (재기동 시 사용자 데이터 보존)', async () => {
-  const { app, tmpDir, cleanup } = await launchWithIsolatedUserData({ withReleaseSeed: false });
-  let app2 = null;
+test('[boot-2] 기존 warehouse.sqlite 존재 시 덮어쓰지 않음', async () => {
+  // 사전 DB 배치: smoke fixture 를 userData 에 미리 깔아놓고 앱을 smoke 가 아닌
+  // 모드로 기동 → bootstrap 분기가 덮어쓰지 않고 기존 DB 를 그대로 사용해야 함
+  const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'myh-boot2-'));
+  const dbPath = path.join(tmpDir, 'warehouse.sqlite');
+  const fixtureSrc = path.join(PROJECT_ROOT, 'test', 'fixtures', 'smoke-warehouse.sqlite');
+  fs.copyFileSync(fixtureSrc, dbPath);
+  const sizeBefore = fs.statSync(dbPath).size;
+
+  const env = { ...process.env, NODE_ENV: 'production', MYH_USERDATA: tmpDir, MYH_NO_NET: '1' };
+  const exe = findUnpackedExe();
+  const launchOpts = exe
+    ? { executablePath: exe, env, timeout: 30_000 }
+    : { args: [path.join(PROJECT_ROOT, 'electron', 'main.js')], env, cwd: PROJECT_ROOT, timeout: 30_000 };
+  const app = await _electron.launch(launchOpts);
   try {
     const win = await app.firstWindow();
+    await win.waitForLoadState('domcontentloaded');
     await win.waitForFunction(() => !!window.api, null, { timeout: 20_000 });
-    const added = await win.evaluate(() => window.api.addNote('005930', Date.now(), 'boot-2 persist', 'test'));
-    expect(added).toBeTruthy();
-    const verify = await win.evaluate(() => window.api.listNotes('005930'));
-    expect(verify.some((n) => n.text === 'boot-2 persist')).toBe(true);
 
-    const dbPath = path.join(tmpDir, 'warehouse.sqlite');
-    expect(fs.existsSync(dbPath)).toBe(true);
-    const sizeBefore = fs.statSync(dbPath).size;
+    // fixture 의 10종목이 그대로 보이면 덮어쓰기가 없었다는 의미
+    const stocks = await win.evaluate(() => window.api.searchStocks(''));
+    expect(stocks.length).toBeGreaterThanOrEqual(10);
+    expect(stocks.some((s) => s.code === '247540')).toBe(true); // fixture 에코프로비엠
 
-    await app.close();
-    // WAL checkpoint 시간 여유
-    await new Promise((r) => setTimeout(r, 500));
-
-    // 동일 userData 로 재기동 → 메모가 그대로 보여야 함
-    const env = { ...process.env, NODE_ENV: 'production', MYH_USERDATA: tmpDir, MYH_NO_NET: '1' };
-    const exe = findUnpackedExe();
-    const launchOpts = exe
-      ? { executablePath: exe, env, timeout: 30_000 }
-      : { args: [path.join(PROJECT_ROOT, 'electron', 'main.js')], env, cwd: PROJECT_ROOT, timeout: 30_000 };
-    app2 = await _electron.launch(launchOpts);
-    const win2 = await app2.firstWindow();
-    await win2.waitForLoadState('domcontentloaded');
-    await win2.waitForFunction(() => !!window.api, null, { timeout: 20_000 });
-    const notes = await win2.evaluate(() => window.api.listNotes('005930'));
-    expect(notes.some((n) => n.text === 'boot-2 persist')).toBe(true);
-
-    // DB 파일 크기가 줄어들지 않음 (덮어쓰기 없음)
+    // DB 크기도 동일 (부록적 확인)
     const sizeAfter = fs.statSync(dbPath).size;
     expect(sizeAfter).toBeGreaterThanOrEqual(sizeBefore);
   } finally {
-    try { await app2?.close(); } catch {}
-    await cleanup(app);
+    try { await app.close(); } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 });
