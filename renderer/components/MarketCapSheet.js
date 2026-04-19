@@ -210,10 +210,10 @@ export default function MarketCapSheet({ selectedCode, onSelect }) {
     else if (e.key === 'End') { e.preventDefault(); moveSelection(rows.length); }
   };
 
-  // 최초 로드 + 종목 외부 변경 시 자동 포커스
+  // 최초 rows 로드 시 자동 포커스 (키보드 네비게이션 활성화)
   useEffect(() => {
-    containerRef.current?.focus?.();
-  }, [rows.length > 0]);
+    if (rows.length > 0) containerRef.current?.focus?.();
+  }, [rows.length]);
 
   return (
     <div

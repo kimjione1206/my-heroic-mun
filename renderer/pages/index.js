@@ -28,6 +28,7 @@ export default function Home() {
   const [syncProg, setSyncProg] = useState(null);
   const [marketcapStatus, setMarketcapStatus] = useState({ ready: false, running: false, total: 0, withShares: 0 });
   const [sharesProg, setSharesProg] = useState(null);
+  const [toast, setToast] = useState(null);  // { kind, message }
 
   // test hooks: Playwright 에서 chart 인스턴스/상태 직접 접근
   useEffect(() => {
@@ -86,8 +87,25 @@ export default function Home() {
       refreshMarketcap();
     });
 
-    return () => { offP(); offStart(); offProg(); offDone(); offExt?.(); offSStart?.(); offSProg?.(); offSDone?.(); };
+    const offBlocked = window.api.onSheetBlocked?.((p) => {
+      const msg = p?.reason === 'running'
+        ? `시총 데이터 수집 중입니다 (${p.withShares}/${p.total})`
+        : '시총 데이터가 아직 준비되지 않았습니다. 먼저 수집을 완료해주세요.';
+      setToast({ kind: 'warn', message: msg });
+    });
+    const offSkipped = window.api.onSyncSkipped?.((p) => {
+      setToast({ kind: 'info', message: `오늘 이미 동기화됨 (${new Date(p.lastSyncAt).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit' })}) — 부팅 sync 생략` });
+    });
+
+    return () => { offP(); offStart(); offProg(); offDone(); offExt?.(); offSStart?.(); offSProg?.(); offSDone?.(); offBlocked?.(); offSkipped?.(); };
   }, []);
+
+  // 토스트 자동 사라짐
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -330,6 +348,18 @@ export default function Home() {
           <span>{selected.name} ({selected.code}) · {period === 'D' ? '일봉' : period === 'W' ? '주봉' : '월봉'}</span>
         </span>
       </header>
+
+      {toast && (
+        <div style={{
+          position: 'fixed', top: 58, left: '50%', transform: 'translateX(-50%)',
+          background: toast.kind === 'warn' ? '#3a2a10' : '#1a2a3a',
+          border: `1px solid ${toast.kind === 'warn' ? '#ffbb00' : '#4d9cff'}`,
+          color: '#e6e6e6', padding: '8px 14px', borderRadius: 6,
+          fontSize: 12, zIndex: 999, maxWidth: 600,
+        }}>
+          {toast.message}
+        </div>
+      )}
 
       <main className="main">
         <ChartToolbar

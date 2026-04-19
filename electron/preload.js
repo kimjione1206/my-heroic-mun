@@ -60,4 +60,6 @@ contextBridge.exposeInMainWorld('api', {
   onSharesStart: (cb) => on('shares:start', cb),
   onSharesProgress: (cb) => on('shares:progress', cb),
   onSharesDone: (cb) => on('shares:done', cb),
+  onSheetBlocked: (cb) => on('sheet:blocked', cb),
+  onSyncSkipped: (cb) => on('sync:skipped', cb),
 });

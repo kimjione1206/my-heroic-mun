@@ -102,7 +102,8 @@ function createSheetWindow() {
     show: true, center: !bounds.x,
     webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false },
   });
-  if (isDev) sheetWindow.loadURL('http://localhost:3000/sheet');
+  // dev: query string으로 trailingSlash 리다이렉트 루프 회피
+  if (isDev) sheetWindow.loadURL('http://localhost:3000/sheet?w=1');
   else sheetWindow.loadFile(path.join(RENDERER_OUT, 'sheet.html'));
 
   sheetWindow.on('close', () => {
@@ -233,27 +234,34 @@ async function ensureSharesInBackground() {
   const withShares = countStocksWithShares();
   if (withShares >= stocks.length * 0.8) return;  // 80% 이상이면 skip
   sharesSyncRunning = true;
-  mainWindow?.webContents.send('shares:start', { total: stocks.length });
-  const pLimit = (await import('p-limit')).default;
-  const limit = pLimit(5);
   let done = 0, ok = 0, fail = 0;
   const batch = [];
   const flush = () => { if (batch.length > 0) upsertShares(batch.splice(0)); };
-  const tasks = stocks.map((s) =>
-    limit(async () => {
-      try {
-        const n = await fetchSharesOutstanding(s.code, { market: s.market });
-        if (n) { batch.push({ code: s.code, shares: n }); ok++; } else fail++;
-      } catch { fail++; }
-      done++;
-      if (batch.length >= 50) flush();
-      if (done % 50 === 0) mainWindow?.webContents.send('shares:progress', { done, total: stocks.length, ok, fail });
-    })
-  );
-  await Promise.all(tasks);
-  flush();
-  sharesSyncRunning = false;
-  mainWindow?.webContents.send('shares:done', { done, total: stocks.length, ok, fail });
+  try {
+    mainWindow?.webContents.send('shares:start', { total: stocks.length });
+    const pLimit = (await import('p-limit')).default;
+    const limit = pLimit(5);
+    const tasks = stocks.map((s) =>
+      limit(async () => {
+        try {
+          const n = await fetchSharesOutstanding(s.code, { market: s.market });
+          if (n) { batch.push({ code: s.code, shares: n }); ok++; } else fail++;
+        } catch { fail++; }
+        done++;
+        if (batch.length >= 50) flush();
+        if (done % 50 === 0) mainWindow?.webContents.send('shares:progress', { done, total: stocks.length, ok, fail });
+      })
+    );
+    await Promise.all(tasks);
+    flush();
+    mainWindow?.webContents.send('shares:done', { done, total: stocks.length, ok, fail });
+  } catch (e) {
+    console.error('[shares:bg]', e);
+    try { flush(); } catch {}
+    mainWindow?.webContents.send('shares:done', { done, total: stocks.length, ok, fail, error: e.message });
+  } finally {
+    sharesSyncRunning = false;
+  }
 }
 
 // ─── IPC: 창 간 선택 동기화 ───
@@ -379,26 +387,30 @@ ipcMain.handle('marketcap:ranking', (_e, arg = {}) => {
   return { rows, columns };
 });
 
+const isColumnKey = (v) => typeof v === 'string' && /^[a-z0-9_]{1,32}$/i.test(v);
+
 ipcMain.handle('sheet:columns:list', () => listSheetColumns());
 ipcMain.handle('sheet:columns:add', (_e, arg = {}) => {
   const { key, label, type } = arg;
-  if (typeof key !== 'string' || !/^[a-z0-9_]{1,32}$/i.test(key)) return listSheetColumns();
-  if (typeof label !== 'string' || label.trim().length === 0) return listSheetColumns();
+  if (!isColumnKey(key)) return listSheetColumns();
+  if (typeof label !== 'string' || label.trim().length === 0 || label.length > 40) return listSheetColumns();
   const t = ['text', 'number', 'bool'].includes(type) ? type : 'text';
   return addSheetColumn({ key, label: label.trim(), type: t });
 });
 ipcMain.handle('sheet:columns:remove', (_e, key) => {
-  if (typeof key !== 'string') return listSheetColumns();
+  if (!isColumnKey(key)) return listSheetColumns();
   return removeSheetColumn(key);
 });
 ipcMain.handle('sheet:columns:reorder', (_e, keys) => {
-  if (!Array.isArray(keys)) return listSheetColumns();
+  if (!Array.isArray(keys) || !keys.every(isColumnKey)) return listSheetColumns();
   return reorderSheetColumns(keys);
 });
 ipcMain.handle('sheet:cell:set', (_e, arg = {}) => {
   const { code, columnKey, value } = arg;
-  if (!isCode(code) || typeof columnKey !== 'string') return false;
-  return setCell(code, columnKey, value);
+  if (!isCode(code) || !isColumnKey(columnKey)) return false;
+  // value 길이 제한 (XSS/DoS 방지)
+  const v = value == null ? null : String(value).slice(0, 500);
+  return setCell(code, columnKey, v);
 });
 
 ipcMain.handle('shares:ensure', async () => {
@@ -439,13 +451,15 @@ ipcMain.handle('backtest:run', (_e, arg = {}) => {
     return { result: null, hits: 0, error: 'invalid-args' };
   }
   const holdDaysNum = Math.min(60, Math.max(1, Number(holdDays) || 5));
+  const safeEntryAt = ['close', 'nextOpen'].includes(entryAt) ? entryAt : 'nextOpen';
+  const safeExitAt = ['close', 'nextOpen'].includes(exitAt) ? exitAt : 'close';
   const candles = loadCandles(code, period);
   const ind = loadIndicators(code, period);
   const indByTs = new Map(ind.map((i) => [i.ts, i]));
   const aligned = candles.map((c) => indByTs.get(c.timestamp) || {});
   const stock = listStocks().find((s) => s.code === code);
   const hits = patterns?.runOne(patternId, candles, aligned, { ...stock, period }) || [];
-  return { result: runBacktest(hits, candles, { holdDays: holdDaysNum, entryAt, exitAt }), hits: hits.length };
+  return { result: runBacktest(hits, candles, { holdDays: holdDaysNum, entryAt: safeEntryAt, exitAt: safeExitAt }), hits: hits.length };
 });
 
 // ── Notes ────────────────────────────────
