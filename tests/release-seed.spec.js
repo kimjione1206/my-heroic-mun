@@ -19,7 +19,9 @@ test.describe('release seed (전 종목 번들 검증)', () => {
     // 설치 직후 시뮬레이션: userData 가 비어있으면 bootstrap 이 release seed 를 복사
     // 여기서는 시간 절약을 위해 직접 seed 를 userData 에 복사
     fs.copyFileSync(SEED, path.join(tmpDir, 'warehouse.sqlite'));
+    // MYH_SMOKE 이 상위에서 켜져 있으면 smoke fixture 가 release DB 를 덮어씀 → 제거
     const env = { ...process.env, NODE_ENV: 'production', MYH_USERDATA: tmpDir, MYH_NO_NET: '1' };
+    delete env.MYH_SMOKE;
     const exe = findUnpackedExe();
     const launchOpts = exe
       ? { executablePath: exe, env, timeout: 60_000 }
