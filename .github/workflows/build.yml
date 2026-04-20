@@ -34,7 +34,7 @@ jobs:
         env:
           CI: 'true'
           MYH_SMOKE: '1'
-        run: npx playwright test
+        run: npx playwright test --project=default
         timeout-minutes: 15
 
       - name: Upload Mac E2E diagnostics
@@ -122,7 +122,7 @@ jobs:
         env:
           CI: 'true'
           MYH_SMOKE: '1'
-        run: npx playwright test
+        run: npx playwright test --project=default
         timeout-minutes: 15
 
       - name: Upload installer
