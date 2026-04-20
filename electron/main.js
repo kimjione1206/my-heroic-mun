@@ -30,8 +30,16 @@ const noNet = isSmoke || process.env.MYH_NO_NET === '1';
 // CI/smoke 모드: GPU 비활성화 (windows-latest 하드웨어 가속 불안정)
 if (isSmoke) app.disableHardwareAcceleration();
 
+// userData 경로를 "my-heroic-mun" 으로 고정
+// (기본값은 productName 인 "나만의 영웅문" — 한글 폴더명이 생겨 OS 별 경로 꼬임·uninstall 정리 문제)
+// Electron app.name 자체도 바꿔서 Dock/TaskBar, 캐시 경로 전부 통일.
+if (!process.env.MYH_USERDATA) {
+  try {
+    app.setName('my-heroic-mun');
+    app.setPath('userData', path.join(app.getPath('appData'), 'my-heroic-mun'));
+  } catch {}
+}
 // 테스트 격리: MYH_USERDATA 환경변수가 지정되면 Electron 기본 userData 경로도 재설정
-// (getUserDataPath() 헬퍼뿐 아니라 Electron 내부 캐시·쿠키도 격리 디렉토리로 이동)
 if (process.env.MYH_USERDATA) {
   try { app.setPath('userData', process.env.MYH_USERDATA); } catch {}
 }
@@ -162,6 +170,13 @@ app.whenReady().then(async () => {
   fs.mkdirSync(userData, { recursive: true });
 
   const userDb = path.join(userData, 'warehouse.sqlite');
+  // 구 세션의 WAL/SHM 파일을 정리하는 헬퍼 (.sqlite 를 교체했는데 stale WAL 이 남으면 malformed 에러)
+  const clearWalShm = () => {
+    for (const suffix of ['-wal', '-shm']) {
+      const p = userDb + suffix;
+      if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch {} }
+    }
+  };
 
   if (isSmoke) {
     try {
@@ -170,6 +185,7 @@ app.whenReady().then(async () => {
         : path.join(__dirname, '..', 'test', 'fixtures', 'smoke-warehouse.sqlite');
       console.log(`[smoke] fixtureSrc=${fixtureSrc} exists=${fs.existsSync(fixtureSrc)}`);
       if (fs.existsSync(fixtureSrc)) {
+        clearWalShm();
         fs.copyFileSync(fixtureSrc, userDb);
         console.log('[smoke] fixture warehouse copied');
       }
@@ -183,6 +199,7 @@ app.whenReady().then(async () => {
         ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'release-warehouse.sqlite')
         : path.join(__dirname, '..', 'test', 'fixtures', 'release-warehouse.sqlite');
       if (fs.existsSync(releaseSrc)) {
+        clearWalShm();
         fs.copyFileSync(releaseSrc, userDb);
         console.log(`[bootstrap] release DB copied from ${releaseSrc}`);
       } else {
