@@ -89,4 +89,61 @@ test.describe('release seed (전 종목 번들 검증)', () => {
     }
     expect(okCount).toBeGreaterThanOrEqual(9);  // 10개 중 9개 이상은 양호한 데이터
   });
+
+  test('[rel-6] 비주얼: 시총 창에 2,000+행 렌더 + 스크린샷', async () => {
+    // 차트 창(현재 win)에서 시총 창 열기
+    await win.evaluate(() => window.api.openSheetWindow());
+    const deadline = Date.now() + 20_000;
+    let sheet = null;
+    while (Date.now() < deadline && !sheet) {
+      sheet = app.windows().find((w) => {
+        try { return /sheet(\.html)?$/.test(w.url()); } catch { return false; }
+      });
+      if (!sheet) await new Promise((r) => setTimeout(r, 150));
+    }
+    expect(sheet).toBeTruthy();
+    await sheet.waitForLoadState('domcontentloaded');
+    await sheet.waitForFunction(() => !!window.api, null, { timeout: 20_000 });
+    await sheet.waitForSelector('[data-testid="rank-row"]', { timeout: 20_000 });
+
+    // 랭킹 실제 총 개수 IPC 로 확인 (가상 스크롤 때문에 DOM 은 viewport 만)
+    const dates = await sheet.evaluate(() => window.api.getMarketCapDates(1));
+    const ranking = await sheet.evaluate((ts) => window.api.getMarketCapRanking({ ts, limit: 3000 }), dates[0]);
+    expect(ranking.rows.length).toBeGreaterThanOrEqual(2000);
+
+    await sheet.screenshot({ path: 'test-results/release-sheet.png', fullPage: false });
+  });
+
+  test('[rel-7] 비주얼: 차트 창에 2016~2025 일봉 렌더 + 스크린샷', async () => {
+    // 현재 win 은 차트 창. 삼성전자 선택
+    await win.evaluate(() => window.api.selectStock({ code: '005930', name: '삼성전자' }));
+    // 차트 렌더 대기
+    await win.waitForFunction(() => {
+      const chart = window._testHooks?.getChart?.();
+      const data = chart?.getDataList?.();
+      return Array.isArray(data) && data.length >= 2400;
+    }, null, { timeout: 30_000 });
+    // 최대 줌아웃 (전체 범위 보이도록)
+    await win.evaluate(() => {
+      const chart = window._testHooks.getChart();
+      const data = chart.getDataList();
+      // 전체 범위 표시
+      if (chart.setOffsetRightDistance) chart.setOffsetRightDistance(50);
+      if (chart.scrollToTimestamp) chart.scrollToTimestamp(data[0].timestamp);
+    });
+    await win.waitForTimeout(500);
+
+    // 렌더된 첫 캔들의 연도 검증
+    const range = await win.evaluate(() => {
+      const chart = window._testHooks.getChart();
+      const d = chart.getDataList();
+      return { first: d[0].timestamp, last: d[d.length - 1].timestamp, len: d.length };
+    });
+    const firstYear = new Date(range.first).getUTCFullYear();
+    const lastYear = new Date(range.last).getUTCFullYear();
+    expect(firstYear).toBeLessThanOrEqual(2016);
+    expect(lastYear).toBeGreaterThanOrEqual(2025);
+
+    await win.screenshot({ path: 'test-results/release-chart-2016-2025.png', fullPage: false });
+  });
 });
