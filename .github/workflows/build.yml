@@ -104,6 +104,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 회귀 방지: win-unpacked 에 release DB 가 실제로 번들됐는지, 크기가 900MB 이상인지 검증
+      # (이 검증이 없으면 seed 다운로드 단계가 continue-on-error 로 조용히 실패해도 CI 는 green)
+      - name: Verify release seed bundled in installer
+        shell: pwsh
+        run: |
+          $p = "dist/win-unpacked/resources/app.asar.unpacked/test/fixtures/release-warehouse.sqlite"
+          if (!(Test-Path $p)) { throw "번들 누락: $p 없음 — seed 다운로드 또는 electron-builder files 패턴 확인" }
+          $sz = (Get-Item $p).Length / 1MB
+          Write-Host "✓ 번들 release DB: $([math]::Round($sz, 1)) MB"
+          if ($sz -lt 900) { throw "번들 release DB 크기 이상: ${sz}MB (기대: ≥900MB). 다운로드 실패 가능성" }
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 

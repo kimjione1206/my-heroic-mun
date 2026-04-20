@@ -76,6 +76,18 @@ const SEED = [
   { code: '005380', name: '현대차' },
 ];
 
+// 부트스트랩 시점에 warehouse.js 를 통한 정식 open 없이 stocks 행 수만 빠르게 확인
+function peekStocksCount(dbPath) {
+  try {
+    const Database = require('better-sqlite3');
+    const probe = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const row = probe.prepare(`SELECT COUNT(*) AS n FROM stocks`).get();
+      return row?.n ?? 0;
+    } finally { probe.close(); }
+  } catch { return 0; }
+}
+
 function createMainWindow() {
   const bounds = loadState('main', { width: 1400, height: 900 });
   mainWindow = new BrowserWindow({
@@ -192,17 +204,20 @@ app.whenReady().then(async () => {
     } catch (e) {
       console.error('[smoke] fixture copy failed:', e.message);
     }
-  } else if (!fs.existsSync(userDb)) {
-    // 최초 설치: 번들 release seed DB 를 userData 로 복사 (전체 종목 · 10년 데이터 즉시 사용)
+  } else {
+    // 최초 설치 또는 옛 버전의 stale DB 가 남아있는 경우: 번들 release seed DB 로 강제 교체
+    // (NSIS 는 uninstall 시 userData 를 보존하므로, 옛 5종목 SEED DB 가 남으면 영원히 5종목 상태가 됨 → stocks count 로 감지)
     try {
       const releaseSrc = app.isPackaged
         ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'release-warehouse.sqlite')
         : path.join(__dirname, '..', 'test', 'fixtures', 'release-warehouse.sqlite');
-      if (fs.existsSync(releaseSrc)) {
+      const releaseExists = fs.existsSync(releaseSrc);
+      const needsReseed = !fs.existsSync(userDb) || peekStocksCount(userDb) < 100;
+      if (needsReseed && releaseExists) {
         clearWalShm();
         fs.copyFileSync(releaseSrc, userDb);
         console.log(`[bootstrap] release DB copied from ${releaseSrc}`);
-      } else {
+      } else if (needsReseed) {
         console.log('[bootstrap] release DB 없음 — SEED 로 최소 시작');
       }
     } catch (e) {
