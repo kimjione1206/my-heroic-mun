@@ -143,3 +143,89 @@ jobs:
             playwright-report/**
           if-no-files-found: ignore
           retention-days: 30
+
+  # 실제 NSIS installer 로 silent install → 설치된 앱 대상 E2E
+  # tag push (v*) 에서만 실행. 릴리스 직전 최종 검증용.
+  e2e-win-installed:
+    needs: build-win
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MyHeroicMun-Setup-${{ github.sha }}
+          path: installer
+
+      - name: Silent install (/S)
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem installer/*.exe | Select-Object -First 1
+          if (!$setup) { throw "installer .exe 없음" }
+          Write-Host "설치 시작: $($setup.FullName) ($([math]::Round($setup.Length/1MB, 1)) MB)"
+          $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          Write-Host "설치 종료 code=$($proc.ExitCode)"
+          if ($proc.ExitCode -ne 0) { throw "installer 종료 코드 $($proc.ExitCode)" }
+
+          # productName="나만의 영웅문" 이므로 한글 경로가 기본. 후보 전부 탐색.
+          $candidates = @(
+            "$env:LOCALAPPDATA\Programs\나만의 영웅문\나만의 영웅문.exe",
+            "$env:LOCALAPPDATA\Programs\my-heroic-mun\나만의 영웅문.exe",
+            "$env:PROGRAMFILES\나만의 영웅문\나만의 영웅문.exe",
+            "${env:PROGRAMFILES(X86)}\나만의 영웅문\나만의 영웅문.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (!$exe) {
+            Write-Host "후보 경로 전부 부재. 설치 디렉토리 강제 탐색:"
+            Get-ChildItem -Path "$env:LOCALAPPDATA\Programs","$env:PROGRAMFILES","${env:PROGRAMFILES(X86)}" -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "영웅문|heroic" } | Select-Object FullName, Length
+            throw "설치된 exe 를 찾을 수 없음"
+          }
+          Write-Host "✓ 설치된 exe: $exe"
+          echo "MYH_INSTALLED_EXE=$exe" >> $env:GITHUB_ENV
+
+      - name: Run installed E2E (inst-* 스위트)
+        env:
+          CI: 'true'
+        run: npx playwright test --project=installed
+        timeout-minutes: 15
+
+      - name: Silent uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "$env:LOCALAPPDATA\Programs\나만의 영웅문\Uninstall 나만의 영웅문.exe",
+            "$env:LOCALAPPDATA\Programs\my-heroic-mun\Uninstall 나만의 영웅문.exe",
+            "$env:PROGRAMFILES\나만의 영웅문\Uninstall 나만의 영웅문.exe"
+          )
+          $uninst = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($uninst) {
+            Write-Host "uninstall: $uninst"
+            Start-Process -FilePath $uninst -ArgumentList '/S' -Wait
+          } else {
+            Write-Host "uninstaller 못 찾음 (CI 러너 재사용 안 되므로 무시 가능)"
+          }
+
+      - name: Upload installed E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-installed-${{ github.sha }}
+          path: |
+            test-results/**
+            playwright-report/**
+          if-no-files-found: ignore
+          retention-days: 30

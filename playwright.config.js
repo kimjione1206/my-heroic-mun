@@ -17,11 +17,22 @@ module.exports = defineConfig({
   use: {
     actionTimeout: 10_000,
     navigationTimeout: 30_000,
-    // trace: 모든 테스트마다 저장 — 내부에 액션별 스크린샷 시퀀스 포함 (Claude가 unzip 후 PNG 순차 Read)
     trace: 'on',
-    // 실패 순간 최종 상태 PNG (빠른 진단용)
     screenshot: 'only-on-failure',
-    // 비디오는 Claude가 읽을 수 없어 제거 (trace 내 스크린샷 시퀀스로 대체)
     video: 'off',
   },
+  projects: [
+    {
+      // 기본: win-unpacked 또는 dev electron 실행 (기존 스위트)
+      name: 'default',
+      testIgnore: /tests\/installed\//,
+    },
+    {
+      // NSIS 로 silent 설치된 바이너리 대상. CI 의 e2e-win-installed job 에서만 MYH_INSTALLED_EXE 주입돼 실행.
+      name: 'installed',
+      testMatch: /tests\/installed\/.*\.spec\.js/,
+      timeout: 120_000,  // 첫 기동 bootstrap 900MB copy 고려
+      retries: 1,
+    },
+  ],
 });
