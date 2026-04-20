@@ -76,16 +76,14 @@ const SEED = [
   { code: '005380', name: '현대차' },
 ];
 
-// 부트스트랩 시점에 warehouse.js 를 통한 정식 open 없이 stocks 행 수만 빠르게 확인
-function peekStocksCount(dbPath) {
+// 부트스트랩 시점에 DB 가 stale(옛 SEED 5종목 or smoke 10종목) 인지 파일 크기로 판별.
+// release DB = 941MB, smoke = 5MB, SEED fallback = <1MB. 50MB 를 경계로 명확히 분리됨.
+// SQLite probe open 은 WAL/-shm 핸들 경쟁으로 후속 openWarehouse 에 부작용을 주므로 사용 안 함.
+function isStaleDb(dbPath) {
+  if (!fs.existsSync(dbPath)) return true;
   try {
-    const Database = require('better-sqlite3');
-    const probe = new Database(dbPath, { readonly: true, fileMustExist: true });
-    try {
-      const row = probe.prepare(`SELECT COUNT(*) AS n FROM stocks`).get();
-      return row?.n ?? 0;
-    } finally { probe.close(); }
-  } catch { return 0; }
+    return fs.statSync(dbPath).size < 50 * 1024 * 1024;
+  } catch { return false; }
 }
 
 function createMainWindow() {
@@ -212,7 +210,7 @@ app.whenReady().then(async () => {
         ? path.join(process.resourcesPath, 'app.asar.unpacked', 'test', 'fixtures', 'release-warehouse.sqlite')
         : path.join(__dirname, '..', 'test', 'fixtures', 'release-warehouse.sqlite');
       const releaseExists = fs.existsSync(releaseSrc);
-      const needsReseed = !fs.existsSync(userDb) || peekStocksCount(userDb) < 100;
+      const needsReseed = isStaleDb(userDb);
       if (needsReseed && releaseExists) {
         clearWalShm();
         fs.copyFileSync(releaseSrc, userDb);
@@ -237,7 +235,9 @@ app.whenReady().then(async () => {
   createMainWindow();
 
   const stocksForSync = listStocks();
-  if (stocksForSync.length > 0) {
+  if (stocksForSync.length > 0 && !noNet) {
+    // noNet(테스트/오프라인) 모드에선 스케줄러 자체를 띄우지 않음 — 테스트 중 오늘 날짜로 candles 가
+    // 백그라운드 삽입돼 ranking 이 부분 데이터로 나오는 race 가 발생.
     scheduler = new Scheduler({
       db: getDb(),
       stocks: stocksForSync,
@@ -247,7 +247,7 @@ app.whenReady().then(async () => {
       onDone: (p) => mainWindow?.webContents.send('sync:done', p),
     });
     scheduler.start();
-    if (!noNet) {
+    {
       // 오늘(KST 기준) 이미 동기화됐으면 네트워크 호출 스킵
       setTimeout(() => {
         const lastSync = getLastSyncAt('D');
