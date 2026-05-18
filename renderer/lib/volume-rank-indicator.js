@@ -1,19 +1,15 @@
-// 뷰포트 거래량 순위에 따라 캔들 바 색을 덮어 그리는 커스텀 인디케이터.
-// ≥80% 빨강 / ≥60% 주황 / ≥40% 노랑 / 그 외는 기본(흰색) 캔들 유지.
+// 뷰포트 거래량 비율에 따라 캔들 색을 흰색 → 분홍 → 진빨강 그라데이션으로 덮어 그린다.
+// ratio = volume / maxVol (0~1). ratio=0 → 흰색(255,255,255), ratio=1 → 진빨강(255,0,0).
+// 선형 보간: G·B 채널만 (1-ratio)에 비례해 줄이고 R은 255 고정.
 
 export const VOLUME_RANK_INDICATOR = 'volumeRankCandle';
-
-const THRESHOLDS = [
-  { min: 0.8, color: '#ff4d4f' },
-  { min: 0.6, color: '#ff9500' },
-  { min: 0.4, color: '#ffd400' },
-];
 
 let registered = false;
 
 function colorFor(ratio) {
-  for (const t of THRESHOLDS) if (ratio >= t.min) return t.color;
-  return null;
+  const r = Math.max(0, Math.min(1, ratio));
+  const gb = Math.round(255 * (1 - r));
+  return `rgb(255,${gb},${gb})`;
 }
 
 export function registerVolumeRankIndicator(kline) {
@@ -43,13 +39,11 @@ export function registerVolumeRankIndicator(kline) {
       const bs = chart.getBarSpace();
       const half = Math.max(1, bs.halfGapBar || bs.halfBar || 3);
 
-      // 색상별로 바디(rect)와 심지(line) 좌표를 누적한 뒤 한 번에 flush.
-      const groups = new Map();  // color -> { bodies: [], wicks: [] }
+      // 매 캔들마다 색이 달라지므로 그룹화 없이 한 개씩 그린다.
       for (let i = from; i < to; i++) {
         const k = dataList[i];
         if (!k || k.volume == null) continue;
         const color = colorFor(k.volume / maxVol);
-        if (!color) continue;
 
         const x = Math.round(xAxis.convertToPixel(i));
         const yOpen = yAxis.convertToPixel(k.open);
@@ -57,22 +51,14 @@ export function registerVolumeRankIndicator(kline) {
         const top = Math.round(Math.min(yOpen, yClose));
         const bodyH = Math.max(1, Math.round(Math.abs(yClose - yOpen)));
 
-        let g = groups.get(color);
-        if (!g) { g = { bodies: [], wicks: [] }; groups.set(color, g); }
-        g.bodies.push([x - half, top, half * 2, bodyH]);
-        g.wicks.push([x + 0.5, Math.round(yAxis.convertToPixel(k.high)), Math.round(yAxis.convertToPixel(k.low))]);
-      }
-
-      for (const [color, g] of groups) {
         ctx.fillStyle = color;
-        for (const [x, y, w, h] of g.bodies) ctx.fillRect(x, y, w, h);
+        ctx.fillRect(x - half, top, half * 2, bodyH);
+
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        for (const [x, yHigh, yLow] of g.wicks) {
-          ctx.moveTo(x, yHigh);
-          ctx.lineTo(x, yLow);
-        }
+        ctx.moveTo(x + 0.5, Math.round(yAxis.convertToPixel(k.high)));
+        ctx.lineTo(x + 0.5, Math.round(yAxis.convertToPixel(k.low)));
         ctx.stroke();
       }
       return false;
