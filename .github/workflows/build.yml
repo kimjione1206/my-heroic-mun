@@ -9,7 +9,8 @@ on:
 jobs:
   # Windows 전용: 실 사용 환경(Win NSIS installer)에서만 E2E 가 의미 있음. Mac 잡은 제거됨.
   build-win:
-    runs-on: windows-latest
+    # windows-latest 가 VS 18 로 업데이트되며 node-gyp 가 better-sqlite3 리빌드 실패 → VS 17 환경 고정
+    runs-on: windows-2022
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -109,7 +110,7 @@ jobs:
   e2e-win-installed:
     needs: build-win
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
